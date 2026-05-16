@@ -1,0 +1,121 @@
+export interface TicketDTO {
+  ticket_id?: number;
+  guid?: string;
+  line_id: number;
+  line_name?: string;
+  ticket_number: string;
+  ticket_title?: string;
+  created_at?: string;
+  created_by?: number;
+  created_by_type?: string;
+  creator_name?: string;
+  reported_to?: number;
+  reported_to_name?: string;
+  kpi_main_category_id: number;
+  main_category_name?: string;
+  kpi_sub_category_id: number;
+  sub_category_name?: string;
+  fl_category_id: number;
+  ticket_status: string;
+  ticket_description: string;
+  sp_id: number;
+  sp_name?: string;
+  org_id?: number;
+  org_name?: string;
+  remarks?: string;
+  updated_by?: number;
+  attachment?: string;
+}
+
+export interface TicketTrailDTO {
+  guid?: string;
+  comment?: string;
+  created_at?: string;
+  created_by?: number;
+  creator_name?: string;
+  attachment?: string;
+  ticket_no: string;
+  previous_status?: number;
+  new_status?: number;
+  sp_id: number;
+  line_id: number;
+}
+
+const API_BASE_URL = 'http://localhost:5000/api';
+
+export const fetchTickets = async (user_id?: number, user_type?: string): Promise<TicketDTO[]> => {
+  const url = new URL(`${API_BASE_URL}/tickets`);
+  if (user_id !== undefined) url.searchParams.append('user_id', String(user_id));
+  if (user_type !== undefined) url.searchParams.append('user_type', user_type);
+  
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to fetch tickets');
+  }
+  return response.json();
+};
+
+export const createTicketInDb = async (data: TicketDTO): Promise<TicketDTO> => {
+  const response = await fetch(`${API_BASE_URL}/tickets`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to create ticket');
+  }
+  return response.json();
+};
+
+export const updateTicketInDb = async (data: Partial<TicketDTO>): Promise<TicketDTO> => {
+  const response = await fetch(`${API_BASE_URL}/tickets`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to update ticket');
+  }
+  return response.json();
+};
+
+export const deleteTicketInDb = async (ticket_id: number): Promise<void> => {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticket_id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to delete ticket');
+  }
+};
+
+export const fetchTicketTrail = async (ticket_no: string): Promise<TicketTrailDTO[]> => {
+  const response = await fetch(`${API_BASE_URL}/tickets/trail/${ticket_no}`);
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to fetch ticket trail');
+  }
+  return response.json();
+};
+
+export const fetchUnreadCount = async (user_id: number, user_type: string): Promise<number> => {
+  const response = await fetch(`${API_BASE_URL}/tickets/unread-count?user_id=${user_id}&user_type=${user_type}`);
+  if (!response.ok) return 0;
+  const data = await response.json();
+  return data.count || 0;
+};
+
+export const markTicketAsRead = async (ticket_id: number, user_id: number, user_type: string): Promise<void> => {
+  await fetch(`${API_BASE_URL}/tickets/mark-read/${ticket_id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id, user_type }),
+  });
+};
