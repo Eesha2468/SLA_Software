@@ -2,10 +2,6 @@
 
 **TAP Trade and Projects**
 
-## Login Credentials
-- **Username:** Admin
-- **Password:** admin22
-
 ## Tech Stack
 - React 18 + TypeScript
 - Vite
