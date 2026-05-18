@@ -5,6 +5,7 @@ COPY package*.json ./
 RUN npm install
 COPY . .
 RUN npm run build
+COPY nginx.conf /etc/nginx/nginx.conf
 
 # STAGE 2: Backend Build
 FROM node:18-alpine AS backend-builder
