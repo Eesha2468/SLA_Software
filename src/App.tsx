@@ -21,13 +21,18 @@ import { theme } from './styles/theme';
 import './index.css';
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    // Check if user is already logged in on page load/refresh
+    const user = localStorage.getItem('user');
+    return !!user;
+  });
 
   const handleLogin = () => {
     setIsLoggedIn(true);
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('user');
     setIsLoggedIn(false);
   };
 

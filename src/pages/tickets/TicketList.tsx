@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Table, Tag, Typography, Button, Space, Modal, Form, Select, Input, message, Checkbox, Upload, Popconfirm } from "antd";
 import { EditOutlined, UploadOutlined, DeleteOutlined, SearchOutlined, PlusCircleOutlined } from "@ant-design/icons";
 import { useTickets } from "../../hooks/useTickets";
 import { useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
-import { TicketDTO } from "../../api/ticketApi";
+import { TicketDTO, markAllTicketsAsRead } from "../../api/ticketApi";
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -39,6 +39,19 @@ const TicketList: React.FC<TicketListProps> = (props) => {
       return null;
     }
   })();
+
+  useEffect(() => {
+    const clearNotifications = async () => {
+      if (loggedInUser) {
+        try {
+          await markAllTicketsAsRead(loggedInUser.id, loggedInUser.user_type);
+        } catch (error) {
+          console.error("Failed to clear notifications:", error);
+        }
+      }
+    };
+    clearNotifications();
+  }, [loggedInUser?.id]);
 
   const filteredTickets = (tickets || []).filter((t) => {
     const search = searchText.toLowerCase();

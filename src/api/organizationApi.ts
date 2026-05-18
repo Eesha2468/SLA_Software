@@ -13,8 +13,15 @@ export interface OrganizationDTO {
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
-export const fetchOrganizations = async (): Promise<OrganizationDTO[]> => {
-  const response = await fetch(`${API_BASE_URL}/organization?org_id=ALL`);
+export const fetchOrganizations = async (line_id?: number | string): Promise<OrganizationDTO[]> => {
+  const url = new URL(`${API_BASE_URL}/organization`);
+  if (line_id) {
+    url.searchParams.append('line_id', String(line_id));
+  } else {
+    url.searchParams.append('org_id', 'ALL');
+  }
+  
+  const response = await fetch(url.toString());
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || 'Failed to fetch organizations');

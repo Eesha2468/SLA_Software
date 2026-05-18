@@ -52,6 +52,13 @@ export const useTickets = () => {
 
   useEffect(() => {
     loadTickets();
+    
+    // Polling for "real-time" updates every 10 seconds
+    const interval = setInterval(() => {
+      loadTickets();
+    }, 10000);
+
+    return () => clearInterval(interval);
   }, []);
 
   return {

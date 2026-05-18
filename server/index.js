@@ -35,10 +35,18 @@ pool.query('SELECT NOW()', (err, res) => {
 
 // GET ALL OR ONE
 app.get('/api/organization', async (req, res) => {
-  const { org_id } = req.query;
+  const { org_id, line_id } = req.query;
   try {
     if (org_id === 'ALL') {
       const result = await pool.query('SELECT * FROM organization ORDER BY created_at DESC');
+      res.json(result.rows);
+    } else if (line_id) {
+      const result = await pool.query(`
+        SELECT DISTINCT o.* 
+        FROM organization o
+        JOIN lines l ON o.org_id = l.org_id
+        WHERE l.line_id = $1
+      `, [line_id]);
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM organization WHERE org_id = $1', [org_id]);
@@ -253,10 +261,18 @@ app.get('/api/line-colors', async (req, res) => {
 
 // GET ALL OR ONE
 app.get('/api/service-providers', async (req, res) => {
-  const { sp_id } = req.query;
+  const { sp_id, line_id } = req.query;
   try {
     if (sp_id === 'ALL') {
       const result = await pool.query('SELECT * FROM serviceprovider ORDER BY sp_id DESC');
+      res.json(result.rows);
+    } else if (line_id) {
+      const result = await pool.query(`
+        SELECT sp.* 
+        FROM serviceprovider sp
+        JOIN serviceprovider_lines spl ON sp.sp_id = spl.sp_id
+        WHERE spl.line_id = $1
+      `, [line_id]);
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM serviceprovider WHERE sp_id = $1', [sp_id]);
@@ -347,7 +363,7 @@ app.delete('/api/service-providers/:sp_id', async (req, res) => {
 
 // GET ALL OR ONE
 app.get('/api/users', async (req, res) => {
-  const { user_id } = req.query;
+  const { user_id, sp_id } = req.query;
   try {
     if (user_id === 'ALL') {
       const result = await pool.query(`
@@ -357,6 +373,9 @@ app.get('/api/users', async (req, res) => {
         LEFT JOIN serviceprovider sp ON u.sp_id = sp.sp_id
         ORDER BY u.user_id DESC
       `);
+      res.json(result.rows);
+    } else if (sp_id) {
+      const result = await pool.query('SELECT * FROM "Users" WHERE sp_id = $1', [sp_id]);
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM "Users" WHERE user_id = $1', [user_id]);
@@ -457,7 +476,7 @@ app.delete('/api/users/:user_id', async (req, res) => {
 
 // GET ALL OR ONE
 app.get('/api/client-users', async (req, res) => {
-  const { client_user_id } = req.query;
+  const { client_user_id, org_id } = req.query;
   try {
     if (client_user_id === 'ALL') {
       const result = await pool.query(`
@@ -467,6 +486,9 @@ app.get('/api/client-users', async (req, res) => {
         LEFT JOIN organization o ON u.org_id = o.org_id
         ORDER BY u.client_user_id DESC
       `);
+      res.json(result.rows);
+    } else if (org_id) {
+      const result = await pool.query('SELECT * FROM "Client_Users" WHERE org_id = $1', [org_id]);
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM "Client_Users" WHERE client_user_id = $1', [client_user_id]);
@@ -567,17 +589,10 @@ app.delete('/api/client-users/:client_user_id', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   try {
-    // 1. Check in regular Users table
+    // 1. Check in regular Users table (Service Providers)
     const userResult = await pool.query('SELECT * FROM "Users" WHERE username = $1 AND password = $2', [username, password]);
-    
-    // 2. Check in Client_Users table
-    const clientUserResult = await pool.query('SELECT * FROM "Client_Users" WHERE username = $1', [username]);
-
-    // REQUIREMENT: Must exist in BOTH tables
-    if (userResult.rows.length > 0 && clientUserResult.rows.length > 0) {
+    if (userResult.rows.length > 0) {
       const user = userResult.rows[0];
-      const clientUser = clientUserResult.rows[0];
-      
       return res.json({
         success: true,
         user: {
@@ -585,8 +600,26 @@ app.post('/api/login', async (req, res) => {
           username: user.username,
           first_name: user.first_name,
           last_name: user.last_name,
-          user_type: 'regular', // Defaulting to regular, but they are validated in both
+          user_type: 'regular',
           sp_id: user.sp_id,
+          org_id: null
+        }
+      });
+    }
+
+    // 2. Check in Client_Users table (Clients)
+    const clientUserResult = await pool.query('SELECT * FROM "Client_Users" WHERE username = $1 AND password = $2', [username, password]);
+    if (clientUserResult.rows.length > 0) {
+      const clientUser = clientUserResult.rows[0];
+      return res.json({
+        success: true,
+        user: {
+          id: clientUser.client_user_id,
+          username: clientUser.username,
+          first_name: clientUser.first_name,
+          last_name: clientUser.last_name,
+          user_type: 'client',
+          sp_id: null,
           org_id: clientUser.org_id
         }
       });
@@ -606,7 +639,7 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    res.status(401).json({ error: 'Access Denied: User must be registered in both User and Client systems.' });
+    res.status(401).json({ error: 'Invalid username or password' });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: 'Server error during login' });
@@ -999,13 +1032,14 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     // 2. Insert into Tickets (Added is_read=FALSE, last_action_by)
     const ticketResult = await client.query(
       `INSERT INTO "Tickets" (ticket_id, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, ticket_status, ticket_description, sp_id, org_id, created_by, created_by_type, reported_to, reported_to_type, attachment, is_read, last_action_by) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, FALSE, $12) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, FALSE, $17) RETURNING *`,
       [
         nextId, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, 
         ticket_status, ticket_description, sp_id, org_id, 
         created_by || null, created_by_type || 'regular', 
         reported_to || null, created_by_type === 'client' ? 'regular' : 'client', 
-        attachment || null
+        attachment || null,
+        created_by || null
       ]
     );
 
@@ -1170,6 +1204,34 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
         console.error(err.message);
         res.status(500).json({ error: 'Failed to mark ticket as read' });
       }
+    });
+
+    app.put('/api/tickets/mark-all-read', async (req, res) => {
+      const { user_id, user_type } = req.body;
+      try {
+        let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE';
+        let params = [];
+        
+        if (user_type !== 'admin') {
+          query += ' AND reported_to = $1 AND reported_to_type = $2';
+          params = [user_id, user_type || 'regular'];
+        }
+        
+        await pool.query(query, params);
+        res.json({ success: true });
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Failed to mark all tickets as read' });
+      }
+    });
+
+    // Serve Static Files (Production Frontend Build)
+    const path = require('path');
+    app.use(express.static(path.join(__dirname, '../dist')));
+
+    // Fallback to index.html for SPA routing
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(__dirname, '../dist/index.html'));
     });
 
     app.listen(port, () => {

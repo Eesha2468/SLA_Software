@@ -71,10 +71,12 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
               count={ticketCount} 
               size="small" 
               style={{ 
-                backgroundColor: '#ef4444', 
+                backgroundColor: '#ffffff', 
+                color: '#0f172a', 
                 border: 'none', 
                 boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                marginLeft: 8
+                marginLeft: 8,
+                fontWeight: 'bold'
               }} 
             />
           )}

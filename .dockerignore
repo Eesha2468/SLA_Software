@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+dist
+.git
+.env
+.env.local
+.vscode
+Dockerfile
+docker-compose.yml
+nginx.conf
+README.md
+server/node_modules
+server/.env

@@ -119,3 +119,11 @@ export const markTicketAsRead = async (ticket_id: number, user_id: number, user_
     body: JSON.stringify({ user_id, user_type }),
   });
 };
+
+export const markAllTicketsAsRead = async (user_id: number, user_type: string): Promise<void> => {
+  await fetch(`${API_BASE_URL}/tickets/mark-all-read`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id, user_type }),
+  });
+};

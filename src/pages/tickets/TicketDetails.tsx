@@ -1,48 +1,90 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useTickets } from "../../hooks/useTickets";
-import { Card, Tag, List, Typography, Descriptions, Divider, Space, Button } from "antd";
-import { UploadOutlined } from "@ant-design/icons";
+import { Card, Tag, List, Typography, Descriptions, Divider, Space, Button, Form, Input, message, Upload, Row, Col } from "antd";
+import { UploadOutlined, SendOutlined } from "@ant-design/icons";
 import { TicketDTO, fetchTicketTrail, TicketTrailDTO, markTicketAsRead } from "../../api/ticketApi";
 import dayjs from "dayjs";
 
 const { Title, Text } = Typography;
+const { TextArea } = Input;
 
 const TicketDetails: React.FC = () => {
   const { id } = useParams();
-  const { getTicket } = useTickets();
+  const { getTicket, updateTicket } = useTickets();
   const [ticket, setTicket] = useState<TicketDTO | null>(null);
   const [trail, setTrail] = useState<TicketTrailDTO[]>([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [fileList, setFileList] = useState<any[]>([]);
+  const [form] = Form.useForm();
 
   const userString = localStorage.getItem('user');
   const loggedInUser = userString ? JSON.parse(userString) : null;
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const data = await getTicket(id!);
-        if (data) {
-          setTicket(data);
-          const trailData = await fetchTicketTrail(data.ticket_number);
-          setTrail(trailData);
+  const loadData = async () => {
+    try {
+      const data = await getTicket(id!);
+      if (data) {
+        setTicket(data);
+        const trailData = await fetchTicketTrail(data.ticket_number);
+        setTrail(trailData);
 
-          // Mark as read if I am the receiver
-          if (loggedInUser && String(data.reported_to) === String(loggedInUser.id)) {
-            await markTicketAsRead(Number(id), loggedInUser.id, loggedInUser.user_type);
-          }
+        // Mark as read if I am the receiver
+        if (loggedInUser && String(data.reported_to) === String(loggedInUser.id)) {
+          await markTicketAsRead(Number(id), loggedInUser.id, loggedInUser.user_type);
         }
-      } catch (error) {
-        console.error("Failed to load ticket details:", error);
-      } finally {
-        setLoading(false);
       }
-    };
-    load();
-  }, [id, getTicket, loggedInUser?.id]);
+    } catch (error) {
+      console.error("Failed to load ticket details:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (loading) return <div>Loading...</div>;
-  if (!ticket) return <div>Ticket not found</div>;
+  useEffect(() => {
+    loadData();
+    // Real-time trail refresh every 5 seconds
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
+  }, [id, loggedInUser?.id]);
+
+  const handleAddComment = async (values: any) => {
+    if (!ticket) return;
+    setSubmitting(true);
+    try {
+      // Convert file to base64 if exists
+      let attachmentBase64 = null;
+      if (fileList.length > 0) {
+        const file = fileList[0].originFileObj || fileList[0];
+        attachmentBase64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result);
+        });
+      }
+
+      await updateTicket({
+        ticket_id: ticket.ticket_id!,
+        remarks: values.comment,
+        updated_by: loggedInUser?.id,
+        updated_by_type: loggedInUser?.user_type || 'regular',
+        attachment: attachmentBase64 as string,
+      } as any);
+
+      message.success("Response added successfully");
+      form.resetFields();
+      setFileList([]);
+      await loadData();
+    } catch (error: any) {
+      message.error(error.message || "Failed to add response");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading && !ticket) return <div style={{ padding: 24 }}>Loading...</div>;
+  if (!ticket) return <div style={{ padding: 24 }}>Ticket not found</div>;
 
   const renderAttachment = (base64: string | undefined, fileName: string = "attachment") => {
     if (!base64) return null;
@@ -107,6 +149,32 @@ const TicketDetails: React.FC = () => {
             <Text style={{ whiteSpace: 'pre-wrap' }}>{ticket.ticket_description}</Text>
           </Descriptions.Item>
         </Descriptions>
+
+        <Divider />
+        
+        <Title level={4}>Add Response</Title>
+        <Form form={form} layout="vertical" onFinish={handleAddComment}>
+          <Form.Item name="comment" rules={[{ required: true, message: 'Please enter your comment' }]}>
+            <TextArea rows={3} placeholder="Write your response here..." />
+          </Form.Item>
+          <Row gutter={16} align="middle">
+            <Col flex="auto">
+              <Upload 
+                beforeUpload={() => false} 
+                maxCount={1}
+                fileList={fileList}
+                onChange={({ fileList }) => setFileList(fileList)}
+              >
+                <Button icon={<UploadOutlined />}>Attach File</Button>
+              </Upload>
+            </Col>
+            <Col>
+              <Button type="primary" htmlType="submit" icon={<SendOutlined />} loading={submitting}>
+                Send Response
+              </Button>
+            </Col>
+          </Row>
+        </Form>
 
         <h3 style={{ marginTop: 24 }}>Ticket Trail / History</h3>
         <List

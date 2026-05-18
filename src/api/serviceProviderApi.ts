@@ -11,8 +11,15 @@ export interface ServiceProviderDTO {
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
-export const fetchServiceProviders = async (): Promise<ServiceProviderDTO[]> => {
-  const response = await fetch(`${API_BASE_URL}/service-providers?sp_id=ALL`);
+export const fetchServiceProviders = async (line_id?: number | string): Promise<ServiceProviderDTO[]> => {
+  const url = new URL(`${API_BASE_URL}/service-providers`);
+  if (line_id) {
+    url.searchParams.append('line_id', String(line_id));
+  } else {
+    url.searchParams.append('sp_id', 'ALL');
+  }
+
+  const response = await fetch(url.toString());
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || 'Failed to fetch service providers');

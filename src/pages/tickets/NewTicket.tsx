@@ -24,10 +24,8 @@ const NewTicket: React.FC = () => {
   const [kpiCategories, setKpiCategories] = useState<KPICategoryDTO[]>([]);
   const [kpiSubCategories, setKpiSubCategories] = useState<KPISubCategoryDTO[]>([]);
   const [lines, setLines] = useState<LineDTO[]>([]);
-  const [users, setUsers] = useState<UserDTO[]>([]);
-  const [clientUsers, setClientUsers] = useState<ClientUserDTO[]>([]);
+  const [personnel, setPersonnel] = useState<any[]>([]);
   const [faultLevels, setFaultLevels] = useState<FaultLevelCategoryDTO[]>([]);
-  const [spLines, setSpLines] = useState<any[]>([]);
 
   const userString = localStorage.getItem('user');
   const loggedInUser = (() => {
@@ -38,95 +36,101 @@ const NewTicket: React.FC = () => {
       return null;
     }
   })();
-  const isEeshaTap = loggedInUser?.username?.toLowerCase() === 'eesha.tap';
+  
   const isClient = loggedInUser?.user_type === 'client';
+  const isRegularUser = loggedInUser?.user_type === 'regular' || loggedInUser?.user_type === 'admin';
 
   useEffect(() => {
-    const loadData = async () => {
+    const loadInitialData = async () => {
       try {
-        const [spData, orgData, kpiData, subKpiData, lineData, userData, flData, clientUserData] = await Promise.all([
-          fetchServiceProviders(),
-          fetchOrganizations(),
-          fetchKPICategories(),
-          fetchKPISubCategories(),
-          fetchLines(),
-          fetchUsers(),
-          fetchFaultLevelCategories(),
-          fetchClientUsers()
-        ]);
-
-        // Fetch SP-Line associations from DB
-        try {
-          const API_BASE_URL = 'http://localhost:5000/api';
-          const spLinesRes = await fetch(`${API_BASE_URL}/serviceprovider-lines`);
-          if (spLinesRes.ok) {
-            const spLinesData = await spLinesRes.json();
-            setSpLines(spLinesData);
-          }
-        } catch (e) {
-          console.error("Failed to fetch SP-Line associations", e);
-        }
-
-        setServiceProviders(spData);
-        setOrganizations(orgData);
-        setKpiCategories(kpiData);
-        setKpiSubCategories(subKpiData);
+        const lineData = await fetchLines();
         setLines(lineData);
-        setUsers(userData);
-        setFaultLevels(flData);
-        setClientUsers(clientUserData);
       } catch (error) {
-        message.error("Failed to load master data");
+        message.error("Failed to load lines");
       }
     };
-    loadData();
+    loadInitialData();
   }, []);
 
-  const selectedKpiCategory = Form.useWatch('kpi_main_category_id', form);
-  const selectedKpiSubCategory = Form.useWatch('kpi_sub_category_id', form);
   const selectedLine = Form.useWatch('line_id', form);
   const selectedServiceProvider = Form.useWatch('sp_id', form);
   const selectedOrganization = Form.useWatch('org_id', form);
+  const selectedKpiCategory = Form.useWatch('kpi_main_category_id', form);
+  const selectedKpiSubCategory = Form.useWatch('kpi_sub_category_id', form);
 
-  // Filter Service Providers based on selected Line from DB relationships
-  const filteredServiceProviders = serviceProviders.filter(sp => 
-    spLines.some(spl => String(spl.sp_id) === String(sp.sp_id) && String(spl.line_id) === String(selectedLine))
-  );
+  // Cascading Fetch: Line -> Org/SP
+  useEffect(() => {
+    if (selectedLine) {
+      const loadLineRelatedData = async () => {
+        try {
+          if (isRegularUser) {
+            const orgData = await fetchOrganizations(selectedLine);
+            setOrganizations(orgData);
+            setServiceProviders([]); // Reset SPs
+          } else if (isClient) {
+            const spData = await fetchServiceProviders(selectedLine);
+            setServiceProviders(spData);
+            setOrganizations([]); // Reset Orgs
+          }
+        } catch (error) {
+          message.error("Failed to load filtered data for selected line");
+        }
+      };
+      loadLineRelatedData();
+    }
+  }, [selectedLine, isRegularUser, isClient]);
 
-  // Filter KPI Categories based on selected Line and SP
-  const filteredKpiCategories = kpiCategories.filter(cat => {
-    const isSp1 = String(cat.sp_id) === '1';
-    const isTargetLine = String(selectedLine) === '2' || String(selectedLine) === '5';
-    const isCatLineMatched = isSp1 && isTargetLine 
-      ? (String(cat.line_id) === '2' || String(cat.line_id) === '5')
-      : String(cat.line_id) === String(selectedLine);
+  // Cascading Fetch: Org/SP -> Personnel & KPIs
+  useEffect(() => {
+    const spId = isRegularUser ? selectedServiceProvider : (isClient ? selectedServiceProvider : undefined);
+    const orgId = isRegularUser ? selectedOrganization : (isClient ? selectedOrganization : undefined);
 
-    return isCatLineMatched && String(cat.sp_id) === String(selectedServiceProvider || (isEeshaTap ? 1 : ''));
-  });
+    if (spId || orgId) {
+      const loadOrgOrSpData = async () => {
+        try {
+          // Fetch Personnel
+          if (isRegularUser && selectedOrganization) {
+            const clientUsers = await fetchClientUsers(selectedOrganization);
+            setPersonnel(clientUsers.map(cu => ({ value: cu.client_user_id, label: `${cu.first_name} ${cu.last_name || ''}`, type: 'client' })));
+          } else if (isClient && selectedServiceProvider) {
+            const users = await fetchUsers(selectedServiceProvider);
+            setPersonnel(users.map(u => ({ value: u.user_id, label: `${u.first_name} ${u.last_name || ''}`, type: 'regular' })));
+          }
 
-  // Filter Sub-Categories based on Parent, Line, and SP
-  const filteredSubCategories = kpiSubCategories.filter(s => {
-    const isSp1 = String(s.sp_id) === '1';
-    const isTargetLine = String(selectedLine) === '2' || String(selectedLine) === '5';
-    const isSubLineMatched = isSp1 && isTargetLine 
-      ? (String(s.line_id) === '2' || String(s.line_id) === '5')
-      : String(s.line_id) === String(selectedLine);
+          // Fetch KPIs based on Service Provider
+          const currentSpId = isRegularUser ? 1 : selectedServiceProvider; // Logic from original code for Eesha.tap/TradeProjects
+          if (currentSpId) {
+            const kpiData = await fetchKPICategories();
+            setKpiCategories(kpiData.filter(cat => String(cat.sp_id) === String(currentSpId) && String(cat.line_id) === String(selectedLine)));
+          }
+        } catch (error) {
+          console.error("Failed to load personnel or KPIs", error);
+        }
+      };
+      loadOrgOrSpData();
+    }
+  }, [selectedOrganization, selectedServiceProvider, selectedLine, isRegularUser, isClient]);
 
-    return String(s.kpi_main_cat_id) === String(selectedKpiCategory) &&
-           isSubLineMatched &&
-           String(s.sp_id) === String(selectedServiceProvider || (isEeshaTap ? 1 : ''));
-  });
+  // Fetch Sub-KPIs and Fault Levels when KPI Category changes
+  useEffect(() => {
+    if (selectedKpiCategory) {
+      const loadSubKpiData = async () => {
+        try {
+          const subKpiData = await fetchKPISubCategories();
+          const filteredSub = subKpiData.filter(s => String(s.kpi_main_cat_id) === String(selectedKpiCategory) && String(s.line_id) === String(selectedLine));
+          setKpiSubCategories(filteredSub);
+
+          const flData = await fetchFaultLevelCategories();
+          setFaultLevels(flData);
+        } catch (error) {
+          console.error("Failed to load sub-KPIs", error);
+        }
+      };
+      loadSubKpiData();
+    }
+  }, [selectedKpiCategory, selectedLine]);
 
   const filteredFaultLevels = faultLevels.filter(fl => String(fl.kpi_sub_category_id) === String(selectedKpiSubCategory));
-
-  // Personnel Options
-  const personnelOptions = isEeshaTap 
-    ? clientUsers
-        .filter(cu => String(cu.org_id) === String(selectedOrganization))
-        .map(cu => ({ value: cu.client_user_id, label: `${cu.first_name} ${cu.last_name || ''}` }))
-    : users
-        .filter(u => String(u.sp_id) === String(selectedServiceProvider || (isClient ? loggedInUser?.sp_id : 1)))
-        .map(u => ({ value: u.user_id, label: `${u.first_name} ${u.last_name || ''}` }));
 
   const generateTicketNumber = (spId: number | string, lineId: number | string) => {
     const now = new Date();
@@ -146,16 +150,10 @@ const NewTicket: React.FC = () => {
   const [fileList, setFileList] = useState<any[]>([]);
 
   const onFinish = async (values: any) => {
-    let spId = values.sp_id;
-    let orgId = values.org_id;
-    
-    if (isEeshaTap) {
-      spId = 1; // Trade And Projects
-    } else if (isClient) {
-      orgId = loggedInUser.org_id;
-    }
+    let spId = isRegularUser ? 1 : values.sp_id; // Defaulting to 1 for Regular Users as per prompt's implicit context of 'eesha.tap' logic
+    let orgId = isClient ? loggedInUser.org_id : values.org_id;
 
-    const ticketNumber = generateTicketNumber(spId, values.line_id);
+    const ticketNumber = generateTicketNumber(spId || 0, values.line_id);
 
     // Convert file to base64 if exists
     let attachmentBase64 = null;
@@ -182,7 +180,7 @@ const NewTicket: React.FC = () => {
       created_by: loggedInUser ? loggedInUser.id : 1, 
       created_by_type: loggedInUser ? loggedInUser.user_type : 'regular',
       reported_to: values.reported_to,
-      reported_to_type: isEeshaTap ? 'client' : 'regular',
+      reported_to_type: isRegularUser ? 'client' : 'regular',
       attachment: attachmentBase64 as string,
     };
 
@@ -206,19 +204,6 @@ const NewTicket: React.FC = () => {
           initialValues={{ ticket_status: 'Open' }}
         >
           <Row gutter={[16, 24]}>
-            {isEeshaTap && (
-              <Col xs={24} md={8}>
-                <Form.Item name="org_id" label="Organization" rules={[{ required: true }]}>
-                  <Select 
-                    size="large"
-                    placeholder="Select Organization"
-                    options={organizations.map(o => ({ value: o.org_id, label: o.org_name }))} 
-                    style={{ width: '100%' }}
-                  />
-                </Form.Item>
-              </Col>
-            )}
-
             <Col xs={24} md={8}>
               <Form.Item name="line_id" label="Line" rules={[{ required: true }]}>
                 <Select 
@@ -226,23 +211,40 @@ const NewTicket: React.FC = () => {
                   placeholder="Select Line" 
                   options={lines.map(l => ({ value: l.line_id, label: l.line_name }))} 
                   onChange={() => {
-                    form.setFieldsValue({ sp_id: undefined, org_id: undefined, kpi_main_category_id: undefined, kpi_sub_category_id: undefined });
+                    form.setFieldsValue({ sp_id: undefined, org_id: undefined, reported_to: undefined, kpi_main_category_id: undefined, kpi_sub_category_id: undefined });
                   }}
                   style={{ width: '100%' }}
                 />
               </Form.Item>
             </Col>
 
-            {!isEeshaTap && (
+            {isRegularUser && (
+              <Col xs={24} md={8}>
+                <Form.Item name="org_id" label="Organization" rules={[{ required: true }]}>
+                  <Select 
+                    size="large"
+                    placeholder="Select Organization"
+                    options={organizations.map(o => ({ value: o.org_id, label: o.org_name }))} 
+                    disabled={!selectedLine}
+                    onChange={() => {
+                      form.setFieldsValue({ reported_to: undefined });
+                    }}
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+            )}
+
+            {isClient && (
               <Col xs={24} md={8}>
                 <Form.Item name="sp_id" label="Service Provider" rules={[{ required: true }]}>
                   <Select 
                     size="large"
                     placeholder="Select Service Provider"
-                    options={filteredServiceProviders.map(s => ({ value: s.sp_id, label: s.sp_name }))} 
+                    options={serviceProviders.map(s => ({ value: s.sp_id, label: s.sp_name }))} 
                     disabled={!selectedLine}
                     onChange={() => {
-                      form.setFieldsValue({ kpi_main_category_id: undefined, kpi_sub_category_id: undefined });
+                      form.setFieldsValue({ reported_to: undefined, kpi_main_category_id: undefined, kpi_sub_category_id: undefined });
                     }}
                     style={{ width: '100%' }}
                   />
@@ -251,12 +253,24 @@ const NewTicket: React.FC = () => {
             )}
 
             <Col xs={24} md={8}>
+              <Form.Item name="reported_to" label="Personnel Name" rules={[{ required: true }]}>
+                <Select 
+                  size="large"
+                  placeholder="Select Personnel" 
+                  options={personnel}
+                  disabled={isRegularUser ? !selectedOrganization : !selectedServiceProvider}
+                  style={{ width: '100%' }}
+                />
+              </Form.Item>
+            </Col>
+
+            <Col xs={24} md={8}>
               <Form.Item name="kpi_main_category_id" label="Parent KPI Category" rules={[{ required: true }]}>
                 <Select 
                   size="large"
                   placeholder="Select Category" 
-                  options={filteredKpiCategories.map(c => ({ value: c.kpi_main_cat_id, label: c.kpi_name }))} 
-                  disabled={!selectedLine || (!selectedServiceProvider && !isEeshaTap)}
+                  options={kpiCategories.map(c => ({ value: c.kpi_main_cat_id, label: c.kpi_name }))} 
+                  disabled={!selectedLine || (isClient && !selectedServiceProvider)}
                   onChange={() => {
                     form.setFieldsValue({ kpi_sub_category_id: undefined });
                   }}
@@ -270,7 +284,7 @@ const NewTicket: React.FC = () => {
                 <Select 
                   size="large"
                   placeholder="Select Sub-Category" 
-                  options={filteredSubCategories.map(s => ({ value: s.sub_category_id, label: s.sub_category_name }))}
+                  options={kpiSubCategories.map(s => ({ value: s.sub_category_id, label: s.sub_category_name }))}
                   disabled={!selectedKpiCategory}
                   style={{ width: '100%' }}
                 />
@@ -292,18 +306,6 @@ const NewTicket: React.FC = () => {
             <Col xs={24} md={8}>
               <Form.Item name="title" label="Ticket Title">
                 <Input size="large" placeholder="Enter ticket title" style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-
-            <Col xs={24} md={8}>
-              <Form.Item name="reported_to" label="Reported To" rules={[{ required: true }]}>
-                <Select 
-                  size="large"
-                  placeholder="Select Personnel" 
-                  options={personnelOptions}
-                  disabled={isEeshaTap ? !selectedOrganization : !selectedServiceProvider}
-                  style={{ width: '100%' }}
-                />
               </Form.Item>
             </Col>
             
