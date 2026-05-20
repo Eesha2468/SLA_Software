@@ -20,15 +20,6 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
-// Test DB Connection
-pool.query('SELECT NOW()', (err, res) => {
-  if (err) {
-    console.error('❌ Database connection error:', err.stack);
-  } else {
-    console.log('✅ Database connected successfully');
-  }
-});
-
 /**
  * ROUTES FOR ORGANIZATION
  */
@@ -1225,15 +1216,30 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       }
     });
 
-    // Serve Static Files (Production Frontend Build)
-    const path = require('path');
-    app.use(express.static(path.join(__dirname, '../dist')));
-
-    // Fallback to index.html for SPA routing
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, '../dist/index.html'));
-    });
+// Test DB Connection and Start Server
+const startServer = async () => {
+  try {
+    const client = await pool.connect();
+    console.log('✅ Database connected successfully');
+    client.release();
 
     app.listen(port, () => {
-  console.log(`🚀 Server is running on port ${port}`);
+      console.log(`🚀 Server is running on port ${port}`);
+    });
+  } catch (err) {
+    console.error('❌ Database connection error:', err.stack);
+    process.exit(1);
+  }
+};
+
+// Serve Static Files (Production Frontend Build)
+const path = require('path');
+app.use(express.static(path.join(__dirname, '../dist')));
+
+// Fallback to index.html for SPA routing
+// Using regex literal for compatibility with Express 4 and 5
+app.get(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
+
+startServer();
