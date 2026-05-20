@@ -57,6 +57,14 @@ const TicketDetails: React.FC = () => {
       let attachmentBase64 = null;
       if (fileList.length > 0) {
         const file = fileList[0].originFileObj || fileList[0];
+
+        // Check file size (10MB = 10 * 1024 * 1024 bytes)
+        if (file.size > 10 * 1024 * 1024) {
+          message.error("File size should not be greater than 10MB");
+          setSubmitting(false);
+          return;
+        }
+
         attachmentBase64 = await new Promise((resolve) => {
           const reader = new FileReader();
           reader.readAsDataURL(file);
@@ -68,7 +76,7 @@ const TicketDetails: React.FC = () => {
         ticket_id: ticket.ticket_id!,
         remarks: values.comment,
         updated_by: loggedInUser?.id,
-        updated_by_type: loggedInUser?.user_type || 'regular',
+        updated_by_type: loggedInUser?.user_type || 'USER',
         attachment: attachmentBase64 as string,
       } as any);
 

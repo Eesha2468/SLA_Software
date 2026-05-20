@@ -18,12 +18,16 @@ export interface ClientUserDTO {
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
-export const fetchClientUsers = async (org_id?: number | string): Promise<ClientUserDTO[]> => {
+export const fetchClientUsers = async (org_id?: number | string, user_type?: string): Promise<ClientUserDTO[]> => {
   const url = new URL(`${API_BASE_URL}/client-users`);
   if (org_id) {
     url.searchParams.append('org_id', String(org_id));
   } else {
     url.searchParams.append('client_user_id', 'ALL');
+  }
+
+  if (user_type) {
+    url.searchParams.append('user_type', user_type);
   }
 
   const response = await fetch(url.toString());

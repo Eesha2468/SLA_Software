@@ -23,11 +23,18 @@ const ClientUsersManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<ClientUserDTO | null>(null);
 
+  const userString = localStorage.getItem('user');
+  const loggedInUser = userString ? JSON.parse(userString) : null;
+  const isClientUser = loggedInUser?.user_type === 'CLIENT_USER';
+
   const loadData = async () => {
     setLoading(true);
     try {
+      // If CLIENT_USER, we only fetch lines and orgs, but NOT client users list
+      const fetchUsersPromise = isClientUser ? Promise.resolve([]) : fetchClientUsers(undefined, loggedInUser?.user_type);
+      
       const [usersData, linesData, orgData] = await Promise.all([
-        fetchClientUsers(),
+        fetchUsersPromise,
         fetchLines(),
         fetchOrganizations()
       ]);
@@ -212,15 +219,17 @@ const ClientUsersManager: React.FC = () => {
           </Row>
         </Form>
       </Card>
-      <GenericList 
-        title="Client Users List" 
-        dataSource={records.map(r => ({ ...r, id: String(r.client_user_id) }))} 
-        columns={columns} 
-        onEdit={handleEdit} 
-        onDelete={handleDelete}
-        exportFilename="client_users" 
-        loading={loading}
-      />
+      {!isClientUser && (
+        <GenericList 
+          title="Client Users List" 
+          dataSource={records.map(r => ({ ...r, id: String(r.client_user_id) }))} 
+          columns={columns} 
+          onEdit={handleEdit} 
+          onDelete={handleDelete}
+          exportFilename="client_users" 
+          loading={loading}
+        />
+      )}
     </>
   );
 };

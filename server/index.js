@@ -354,7 +354,13 @@ app.delete('/api/service-providers/:sp_id', async (req, res) => {
 
 // GET ALL OR ONE
 app.get('/api/users', async (req, res) => {
-  const { user_id, sp_id } = req.query;
+  const { user_id, sp_id, user_type } = req.query;
+
+  // RBAC: CLIENT_USER cannot see the list
+  if (user_type === 'CLIENT_USER' && user_id === 'ALL') {
+    return res.status(403).json({ error: 'Forbidden: Client users cannot view the full list' });
+  }
+
   try {
     if (user_id === 'ALL') {
       const result = await pool.query(`
@@ -467,7 +473,13 @@ app.delete('/api/users/:user_id', async (req, res) => {
 
 // GET ALL OR ONE
 app.get('/api/client-users', async (req, res) => {
-  const { client_user_id, org_id } = req.query;
+  const { client_user_id, org_id, user_type } = req.query;
+  
+  // RBAC: CLIENT_USER cannot see the list
+  if (user_type === 'CLIENT_USER' && client_user_id === 'ALL') {
+    return res.status(403).json({ error: 'Forbidden: Client users cannot view the full list' });
+  }
+
   try {
     if (client_user_id === 'ALL') {
       const result = await pool.query(`
@@ -591,7 +603,7 @@ app.post('/api/login', async (req, res) => {
           username: user.username,
           first_name: user.first_name,
           last_name: user.last_name,
-          user_type: 'regular',
+          user_type: 'USER',
           sp_id: user.sp_id,
           org_id: null
         }
@@ -609,7 +621,7 @@ app.post('/api/login', async (req, res) => {
           username: clientUser.username,
           first_name: clientUser.first_name,
           last_name: clientUser.last_name,
-          user_type: 'client',
+          user_type: 'CLIENT_USER',
           sp_id: null,
           org_id: clientUser.org_id
         }
@@ -625,7 +637,7 @@ app.post('/api/login', async (req, res) => {
           username: 'Admin',
           first_name: 'System',
           last_name: 'Admin',
-          user_type: 'admin'
+          user_type: 'ADMIN'
         }
       });
     }
@@ -956,11 +968,11 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
              mc.kpi_name as main_category_name, 
              sc.sub_category_name,
              CASE 
-                WHEN t.created_by_type = 'client' THEN cu.first_name || ' ' || COALESCE(cu.last_name, '')
+                WHEN t.created_by_type = 'CLIENT_USER' THEN cu.first_name || ' ' || COALESCE(cu.last_name, '')
                 ELSE u.first_name || ' ' || COALESCE(u.last_name, '')
              END as creator_name,
              CASE 
-                WHEN t.created_by_type = 'client' THEN ru.first_name || ' ' || COALESCE(ru.last_name, '')
+                WHEN t.created_by_type = 'CLIENT_USER' THEN ru.first_name || ' ' || COALESCE(ru.last_name, '')
                 ELSE rcu.first_name || ' ' || COALESCE(rcu.last_name, '')
              END as reported_to_name
       FROM "Tickets" t
@@ -969,8 +981,8 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       LEFT JOIN organization o ON t.org_id = o.org_id
       LEFT JOIN "KPI_Categories" mc ON t.kpi_main_category_id = mc.kpi_main_cat_id
       LEFT JOIN "KPI_Sub_Categories" sc ON t.kpi_sub_category_id = sc.sub_category_id
-      LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'client'
-      LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'client'
+      LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'CLIENT_USER'
+      LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'CLIENT_USER'
       LEFT JOIN "Users" ru ON t.reported_to = ru.user_id
       LEFT JOIN "Client_Users" rcu ON t.reported_to = rcu.client_user_id
     `;
@@ -979,7 +991,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     if (user_id && user_id !== '0') {
       query += ` WHERE (t.created_by = $1 AND t.created_by_type = $2) 
                     OR (t.reported_to = $1 AND t.reported_to_type = $2)`;
-      params.push(user_id, user_type || 'regular');
+      params.push(user_id, user_type || 'USER');
     }
 
     query += ` ORDER BY t.created_at DESC`;
@@ -1027,8 +1039,8 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       [
         nextId, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, 
         ticket_status, ticket_description, sp_id, org_id, 
-        created_by || null, created_by_type || 'regular', 
-        reported_to || null, created_by_type === 'client' ? 'regular' : 'client', 
+        created_by || null, created_by_type || 'USER', 
+        reported_to || null, created_by_type === 'CLIENT_USER' ? 'USER' : 'CLIENT_USER', 
         attachment || null,
         created_by || null
       ]
@@ -1038,7 +1050,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     await client.query(
       `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      ['Ticket Created: ' + ticket_description, ticket_number, 1, sp_id, line_id, created_by || null, created_by_type || 'regular', attachment || null] 
+      ['Ticket Created: ' + ticket_description, ticket_number, 1, sp_id, line_id, created_by || null, created_by_type || 'USER', attachment || null] 
     );
 
     await client.query('COMMIT');
@@ -1061,15 +1073,15 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
         reported_to, // This allows sending back or reassigning
         reported_to_type,
         updated_by, // User ID of who is making the change
-        updated_by_type, // 'regular' or 'client'
+        updated_by_type, // 'USER' or 'CLIENT_USER'
         attachment
       } = req.body;
-    
+
       const client = await pool.connect();
-    
+
       try {
         await client.query('BEGIN');
-    
+
         // 1. Get current ticket info
         const currentTicketResult = await client.query('SELECT * FROM "Tickets" WHERE ticket_id = $1', [ticket_id]);
         if (currentTicketResult.rows.length === 0) {
@@ -1077,7 +1089,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
           return res.status(404).json({ error: 'Ticket not found' });
         }
         const ticket = currentTicketResult.rows[0];
-    
+
         // 2. Update Tickets table (Reset is_read=FALSE, update last_action_by, update reported_to_type)
         const updateResult = await client.query(
           `UPDATE "Tickets" 
@@ -1091,14 +1103,14 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
             ticket_id
           ]
         );
-    
+
         // 3. Insert into Ticket_trail
         await client.query(
           `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [remarks || `Ticket status updated to ${ticket_status}`, ticket.ticket_number, 1, ticket.sp_id, ticket.line_id, updated_by || null, updated_by_type || 'regular', attachment || null]
+          [remarks || `Ticket status updated to ${ticket_status}`, ticket.ticket_number, 1, ticket.sp_id, ticket.line_id, updated_by || null, updated_by_type || 'USER', attachment || null]
         );
-    
+
         await client.query('COMMIT');
         res.json(updateResult.rows[0]);
       } catch (err) {
@@ -1109,7 +1121,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
         client.release();
       }
     });
-    
+
     // DELETE TICKET
     app.delete('/api/tickets/:ticket_id', async (req, res) => {
       const { ticket_id } = req.params;
@@ -1168,12 +1180,12 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       try {
         let query = 'SELECT COUNT(*) FROM "Tickets" WHERE is_read = FALSE';
         let params = [];
-        
-        if (user_type !== 'admin') {
+
+        if (user_type !== 'ADMIN') {
           query += ' AND reported_to = $1 AND reported_to_type = $2';
-          params = [user_id, user_type || 'regular'];
+          params = [user_id, user_type || 'USER'];
         }
-        
+
         const result = await pool.query(query, params);
         res.json({ count: parseInt(result.rows[0].count) });
       } catch (err) {
@@ -1188,7 +1200,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       try {
         await pool.query(
           'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1 AND reported_to = $2 AND reported_to_type = $3',
-          [ticket_id, user_id, user_type || 'regular']
+          [ticket_id, user_id, user_type || 'USER']
         );
         res.json({ success: true });
       } catch (err) {
@@ -1202,12 +1214,12 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       try {
         let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE';
         let params = [];
-        
-        if (user_type !== 'admin') {
+
+        if (user_type !== 'ADMIN') {
           query += ' AND reported_to = $1 AND reported_to_type = $2';
-          params = [user_id, user_type || 'regular'];
+          params = [user_id, user_type || 'USER'];
         }
-        
+
         await pool.query(query, params);
         res.json({ success: true });
       } catch (err) {

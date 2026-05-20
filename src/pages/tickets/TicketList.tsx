@@ -95,7 +95,7 @@ const TicketList: React.FC<TicketListProps> = (props) => {
         ticket_status: isSender ? values.ticket_status : editingTicket.ticket_status,
         remarks: values.remarks,
         updated_by: loggedInUser?.id,
-        updated_by_type: loggedInUser?.user_type || 'regular',
+        updated_by_type: loggedInUser?.user_type || 'USER',
       };
 
       if (values.send_back) {

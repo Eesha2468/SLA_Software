@@ -37,8 +37,8 @@ const NewTicket: React.FC = () => {
     }
   })();
   
-  const isClient = loggedInUser?.user_type === 'client';
-  const isRegularUser = loggedInUser?.user_type === 'regular' || loggedInUser?.user_type === 'admin';
+  const isClient = loggedInUser?.user_type === 'CLIENT_USER';
+  const isRegularUser = loggedInUser?.user_type === 'USER' || loggedInUser?.user_type === 'ADMIN';
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -90,11 +90,11 @@ const NewTicket: React.FC = () => {
         try {
           // Fetch Personnel
           if (isRegularUser && selectedOrganization) {
-            const clientUsers = await fetchClientUsers(selectedOrganization);
-            setPersonnel(clientUsers.map(cu => ({ value: cu.client_user_id, label: `${cu.first_name} ${cu.last_name || ''}`, type: 'client' })));
+            const clientUsers = await fetchClientUsers(selectedOrganization, loggedInUser?.user_type);
+            setPersonnel(clientUsers.map(cu => ({ value: cu.client_user_id, label: `${cu.first_name} ${cu.last_name || ''}`, type: 'CLIENT_USER' })));
           } else if (isClient && selectedServiceProvider) {
             const users = await fetchUsers(selectedServiceProvider);
-            setPersonnel(users.map(u => ({ value: u.user_id, label: `${u.first_name} ${u.last_name || ''}`, type: 'regular' })));
+            setPersonnel(users.map(u => ({ value: u.user_id, label: `${u.first_name} ${u.last_name || ''}`, type: 'USER' })));
           }
 
           // Fetch KPIs based on Service Provider
@@ -159,6 +159,13 @@ const NewTicket: React.FC = () => {
     let attachmentBase64 = null;
     if (fileList.length > 0) {
       const file = fileList[0].originFileObj || fileList[0];
+      
+      // Check file size (10MB = 10 * 1024 * 1024 bytes)
+      if (file.size > 10 * 1024 * 1024) {
+        message.error("File size should not be greater than 10MB");
+        return;
+      }
+
       attachmentBase64 = await new Promise((resolve) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
@@ -178,9 +185,9 @@ const NewTicket: React.FC = () => {
       sp_id: Number(spId || 0),
       org_id: Number(orgId || 0),
       created_by: loggedInUser ? loggedInUser.id : 1, 
-      created_by_type: loggedInUser ? loggedInUser.user_type : 'regular',
+      created_by_type: loggedInUser ? loggedInUser.user_type : 'USER',
       reported_to: values.reported_to,
-      reported_to_type: isRegularUser ? 'client' : 'regular',
+      reported_to_type: isRegularUser ? 'CLIENT_USER' : 'USER',
       attachment: attachmentBase64 as string,
     };
 
@@ -326,7 +333,7 @@ const NewTicket: React.FC = () => {
 
           <Row gutter={16} align="middle" style={{ marginTop: 8 }}>
             <Col flex="auto">
-              <Form.Item label="Attachments (Optional)" style={{ marginBottom: 0 }}>
+              <Form.Item label="Attachment (optional, max size: 10MB)" style={{ marginBottom: 0 }}>
                 <Upload 
                   beforeUpload={() => false} 
                   maxCount={1}

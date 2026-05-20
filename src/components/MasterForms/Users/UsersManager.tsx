@@ -25,13 +25,20 @@ const UsersManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<UserDTO | null>(null);
 
+  const userString = localStorage.getItem('user');
+  const loggedInUser = userString ? JSON.parse(userString) : null;
+  const isClientUser = loggedInUser?.user_type === 'CLIENT_USER';
+
   const selectedSpId = Form.useWatch('sp_id', form);
 
   const loadData = async () => {
     setLoading(true);
     try {
+      // If CLIENT_USER, we only fetch lines/SPs but NOT users list
+      const fetchUsersPromise = isClientUser ? Promise.resolve([]) : fetchUsers(undefined, loggedInUser?.user_type);
+      
       const [usersData, linesData, spData, spLinesData] = await Promise.all([
-        fetchUsers(),
+        fetchUsersPromise,
         fetchLines(),
         fetchServiceProviders(),
         fetchServiceProviderLines()
@@ -237,15 +244,17 @@ const UsersManager: React.FC = () => {
           </Row>
         </Form>
       </Card>
-      <GenericList 
-        title="Users List" 
-        dataSource={records.map(r => ({ ...r, id: String(r.user_id) }))} 
-        columns={columns} 
-        onEdit={handleEdit} 
-        onDelete={handleDelete}
-        exportFilename="users" 
-        loading={loading}
-      />
+      {!isClientUser && (
+        <GenericList 
+          title="Users List" 
+          dataSource={records.map(r => ({ ...r, id: String(r.user_id) }))} 
+          columns={columns} 
+          onEdit={handleEdit} 
+          onDelete={handleDelete}
+          exportFilename="users" 
+          loading={loading}
+        />
+      )}
     </>
   );
 };
