@@ -11,7 +11,7 @@ export interface KPISubCategoryDTO {
   fl_category_id: number;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 export const fetchKPISubCategories = async (): Promise<KPISubCategoryDTO[]> => {
   const response = await fetch(`${API_BASE_URL}/kpi-sub-categories?sub_category_id=ALL`);

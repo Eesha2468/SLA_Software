@@ -13,7 +13,7 @@ export interface LineDTO {
   updated_at?: string;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 export const fetchLines = async (): Promise<LineDTO[]> => {
   const response = await fetch(`${API_BASE_URL}/lines?line_id=ALL`);

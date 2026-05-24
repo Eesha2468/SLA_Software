@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -19,6 +20,29 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 });
+
+// Test DB Connection and Start Server
+const startServer = async () => {
+  try {
+    console.log('Connecting to database at:', process.env.DB_HOST);
+    const client = await pool.connect();
+    console.log('✅ Database connected successfully');
+    client.release();
+
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`🚀 Server is running on port ${port} and listening on 0.0.0.0`);
+    });
+  } catch (err) {
+    console.error('❌ Database connection error details:');
+    console.error('Host:', process.env.DB_HOST);
+    console.error('Port:', process.env.DB_PORT);
+    console.error('User:', process.env.DB_USER);
+    console.error('Database:', process.env.DB_NAME);
+    console.error('Error Stack:', err.stack);
+    // Exit with failure so Docker can restart it
+    process.exit(1);
+  }
+};
 
 /**
  * ROUTES FOR ORGANIZATION
@@ -1228,28 +1252,10 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       }
     });
 
-// Test DB Connection and Start Server
-const startServer = async () => {
-  try {
-    const client = await pool.connect();
-    console.log('✅ Database connected successfully');
-    client.release();
-
-    app.listen(port, () => {
-      console.log(`🚀 Server is running on port ${port}`);
-    });
-  } catch (err) {
-    console.error('❌ Database connection error:', err.stack);
-    process.exit(1);
-  }
-};
-
 // Serve Static Files (Production Frontend Build)
-const path = require('path');
 app.use(express.static(path.join(__dirname, '../dist')));
 
 // Fallback to index.html for SPA routing
-// Using regex literal for compatibility with Express 4 and 5
 app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });

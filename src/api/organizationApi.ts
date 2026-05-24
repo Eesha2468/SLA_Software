@@ -11,7 +11,7 @@ export interface OrganizationDTO {
   updated_at?: string;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 export const fetchOrganizations = async (line_id?: number | string): Promise<OrganizationDTO[]> => {
   const url = new URL(`${API_BASE_URL}/organization`);

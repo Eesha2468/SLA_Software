@@ -10,7 +10,7 @@ export interface FaultLevelCategoryDTO {
   line_id?: number;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 export const fetchFaultLevelCategories = async (): Promise<FaultLevelCategoryDTO[]> => {
   const response = await fetch(`${API_BASE_URL}/fault-level-categories?fl_category_id=ALL`);

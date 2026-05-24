@@ -41,7 +41,7 @@ export interface TicketTrailDTO {
   line_id: number;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 export const fetchTickets = async (user_id?: number, user_type?: string): Promise<TicketDTO[]> => {
   const url = new URL(`${API_BASE_URL}/tickets`);

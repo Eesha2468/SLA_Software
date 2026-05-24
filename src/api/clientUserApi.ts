@@ -16,7 +16,7 @@ export interface ClientUserDTO {
   user_email?: string;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 export const fetchClientUsers = async (org_id?: number | string, user_type?: string): Promise<ClientUserDTO[]> => {
   const url = new URL(`${API_BASE_URL}/client-users`);

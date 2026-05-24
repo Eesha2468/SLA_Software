@@ -9,7 +9,7 @@ export interface ServiceProviderDTO {
   sp_abbreviation?: string;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 export const fetchServiceProviders = async (line_id?: number | string): Promise<ServiceProviderDTO[]> => {
   const url = new URL(`${API_BASE_URL}/service-providers`);
