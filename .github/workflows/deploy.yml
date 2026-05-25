@@ -1,0 +1,123 @@
+name: Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  PROJECT_NAME: sla_system
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          target: backend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.PROJECT_NAME }}-backend:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.PROJECT_NAME }}-backend:${{ github.sha }}
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          target: frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.PROJECT_NAME }}-frontend:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.PROJECT_NAME }}-frontend:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Copy Files to VM
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.prod.yml,nginx.conf"
+          target: "/home/cmta/app/${{ env.PROJECT_NAME }}"
+
+      - name: Execute Remote Deployment
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/cmta/app/${{ env.PROJECT_NAME }}
+            
+            # Create/Update .env file securely
+            echo "DB_NAME=${{ secrets.DB_NAME }}" > .env
+            echo "DB_USER=${{ secrets.DB_USER }}" >> .env
+            echo "DB_PASSWORD='${{ secrets.DB_PASSWORD }}'" >> .env
+            echo "PROJECT_NAME=${{ env.PROJECT_NAME }}" >> .env
+            echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> .env
+
+            # Login to registry on VM
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull latest images
+            docker compose -f docker-compose.prod.yml pull
+
+            # Start DB first to ensure it's available for migrations
+            docker compose -f docker-compose.prod.yml up -d db
+            
+            # Wait for DB to be ready
+            echo "Waiting for database..."
+            until docker exec sla_db_prod pg_isready -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }}; do
+              sleep 2
+            done
+
+            # Run Migrations
+            echo "Running database migrations..."
+            docker run --rm \
+              --network ${{ env.PROJECT_NAME }}_sla_network \
+              --env-file .env \
+              -e DB_HOST=db \
+              ghcr.io/${{ github.repository_owner }}/${{ env.PROJECT_NAME }}-backend:latest \
+              npx knex migrate:latest --knexfile server/knexfile.js
+
+            # Start/Update remaining Services
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # Health Check
+            echo "Verifying deployment health..."
+            MAX_RETRIES=10
+            COUNT=0
+            until [ "$(docker inspect -f '{{.State.Health.Status}}' sla_backend_prod)" == "healthy" ]; do
+              if [ $COUNT -eq $MAX_RETRIES ]; then
+                echo "❌ Deployment failed health check! Check logs:"
+                docker compose -f docker-compose.prod.yml logs backend
+                exit 1
+              fi
+              echo "Waiting... ($COUNT/$MAX_RETRIES)"
+              sleep 10
+              COUNT=$((COUNT + 1))
+            done
+            
+            echo "✅ Deployment successful and healthy!"

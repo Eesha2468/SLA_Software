@@ -15,6 +15,7 @@ COPY server/ .
 
 # STAGE 3: Production Backend
 FROM node:18-alpine AS backend
+RUN apk add --no-cache curl
 WORKDIR /app
 COPY --from=backend-builder /app/server ./server
 COPY --from=backend-builder /app/server/node_modules ./server/node_modules
