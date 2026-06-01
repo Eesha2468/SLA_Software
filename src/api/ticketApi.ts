@@ -1,3 +1,5 @@
+import { API_BASE_URL, getApiUrl } from './apiConfig';
+
 export interface TicketDTO {
   ticket_id?: number;
   guid?: string;
@@ -41,10 +43,8 @@ export interface TicketTrailDTO {
   line_id: number;
 }
 
-const API_BASE_URL = '/api';
-
 export const fetchTickets = async (user_id?: number, user_type?: string): Promise<TicketDTO[]> => {
-  const url = new URL(`${API_BASE_URL}/tickets`);
+  const url = getApiUrl('/tickets');
   if (user_id !== undefined) url.searchParams.append('user_id', String(user_id));
   if (user_type !== undefined) url.searchParams.append('user_type', user_type);
   

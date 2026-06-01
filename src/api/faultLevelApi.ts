@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './apiConfig';
+
 export interface FaultLevelCategoryDTO {
   fl_category_id: number;
   guid?: string;
@@ -9,8 +11,6 @@ export interface FaultLevelCategoryDTO {
   sp_id?: number;
   line_id?: number;
 }
-
-const API_BASE_URL = '/api';
 
 export const fetchFaultLevelCategories = async (): Promise<FaultLevelCategoryDTO[]> => {
   const response = await fetch(`${API_BASE_URL}/fault-level-categories?fl_category_id=ALL`);

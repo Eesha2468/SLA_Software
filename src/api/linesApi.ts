@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './apiConfig';
+
 export interface LineDTO {
   line_id: number;
   guid?: string;
@@ -12,8 +14,6 @@ export interface LineDTO {
   created_at?: string;
   updated_at?: string;
 }
-
-const API_BASE_URL = '/api';
 
 export const fetchLines = async (): Promise<LineDTO[]> => {
   const response = await fetch(`${API_BASE_URL}/lines?line_id=ALL`);

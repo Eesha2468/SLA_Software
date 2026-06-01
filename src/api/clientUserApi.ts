@@ -1,3 +1,5 @@
+import { API_BASE_URL, getApiUrl } from './apiConfig';
+
 export interface ClientUserDTO {
   client_user_id: number;
   guid?: string;
@@ -16,10 +18,8 @@ export interface ClientUserDTO {
   user_email?: string;
 }
 
-const API_BASE_URL = '/api';
-
 export const fetchClientUsers = async (org_id?: number | string, user_type?: string): Promise<ClientUserDTO[]> => {
-  const url = new URL(`${API_BASE_URL}/client-users`);
+  const url = getApiUrl('/client-users');
   if (org_id) {
     url.searchParams.append('org_id', String(org_id));
   } else {

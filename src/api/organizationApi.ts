@@ -1,3 +1,5 @@
+import { API_BASE_URL, getApiUrl } from './apiConfig';
+
 export interface OrganizationDTO {
   org_id: number;
   guid?: string;
@@ -11,10 +13,8 @@ export interface OrganizationDTO {
   updated_at?: string;
 }
 
-const API_BASE_URL = '/api';
-
 export const fetchOrganizations = async (line_id?: number | string): Promise<OrganizationDTO[]> => {
-  const url = new URL(`${API_BASE_URL}/organization`);
+  const url = getApiUrl('/organization');
   if (line_id) {
     url.searchParams.append('line_id', String(line_id));
   } else {

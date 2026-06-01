@@ -1,3 +1,5 @@
+import { API_BASE_URL, getApiUrl } from './apiConfig';
+
 export interface ServiceProviderDTO {
   sp_id: number;
   guid?: string;
@@ -9,10 +11,8 @@ export interface ServiceProviderDTO {
   sp_abbreviation?: string;
 }
 
-const API_BASE_URL = '/api';
-
 export const fetchServiceProviders = async (line_id?: number | string): Promise<ServiceProviderDTO[]> => {
-  const url = new URL(`${API_BASE_URL}/service-providers`);
+  const url = getApiUrl('/service-providers');
   if (line_id) {
     url.searchParams.append('line_id', String(line_id));
   } else {
