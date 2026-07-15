@@ -25,7 +25,7 @@ const UsersManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<UserDTO | null>(null);
 
-  const userString = localStorage.getItem('user');
+  const userString = sessionStorage.getItem('user');
   const loggedInUser = userString ? JSON.parse(userString) : null;
   const isClientUser = loggedInUser?.user_type === 'CLIENT_USER';
 

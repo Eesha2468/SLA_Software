@@ -30,7 +30,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
 
   const getTicketCount = async () => {
     try {
-      const userString = localStorage.getItem('user');
+      const userString = sessionStorage.getItem('user');
       const loggedInUser = userString ? JSON.parse(userString) : null;
       if (!loggedInUser) return;
 

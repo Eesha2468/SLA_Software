@@ -19,7 +19,7 @@ const TicketDetails: React.FC = () => {
   const [fileList, setFileList] = useState<any[]>([]);
   const [form] = Form.useForm();
 
-  const userString = localStorage.getItem('user');
+  const userString = sessionStorage.getItem('user');
   const loggedInUser = userString ? JSON.parse(userString) : null;
 
   const loadData = async () => {

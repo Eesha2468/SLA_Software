@@ -9,7 +9,7 @@ export const useTickets = () => {
   const loadTickets = async () => {
     setLoading(true);
     try {
-      const userString = localStorage.getItem('user');
+      const userString = sessionStorage.getItem('user');
       const loggedInUser = userString ? JSON.parse(userString) : null;
       
       const data = await ticketService.getAll(

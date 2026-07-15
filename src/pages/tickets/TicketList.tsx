@@ -31,7 +31,7 @@ const TicketList: React.FC<TicketListProps> = (props) => {
   const [fileList, setFileList] = useState<any[]>([]);
   const [form] = Form.useForm();
 
-  const userString = localStorage.getItem('user');
+  const userString = sessionStorage.getItem('user');
   const loggedInUser = (() => {
     try {
       return userString ? JSON.parse(userString) : null;

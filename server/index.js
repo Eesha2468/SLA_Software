@@ -21,6 +21,72 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
+// Authentication Security Helpers (Zero-dependency JWT alternative)
+const crypto = require('crypto');
+const JWT_SECRET = process.env.JWT_SECRET || 'sla-management-system-secret-key-2026';
+
+function generateToken(payload) {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const payloadStr = Buffer.from(JSON.stringify({
+    ...payload,
+    exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours expiry
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', JWT_SECRET)
+    .update(`${header}.${payloadStr}`)
+    .digest('base64url');
+  return `${header}.${payloadStr}.${signature}`;
+}
+
+function verifyToken(token) {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [header, payloadStr, signature] = parts;
+  const expectedSignature = crypto.createHmac('sha256', JWT_SECRET)
+    .update(`${header}.${payloadStr}`)
+    .digest('base64url');
+  if (signature !== expectedSignature) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadStr, 'base64url').toString('utf8'));
+    if (payload.exp && payload.exp < Date.now() / 1000) return null; // expired
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
+
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: No token provided' });
+  }
+  
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+  }
+  
+  req.user = decoded;
+  next();
+};
+
+const isAdmin = (req, res, next) => {
+  if (!req.user || req.user.user_type !== 'ADMIN') {
+    return res.status(403).json({ error: 'Forbidden: Admin access required' });
+  }
+  next();
+};
+
+// Global API Route Protection (except /api/login)
+app.use('/api', (req, res, next) => {
+  if (req.path === '/login' || req.originalUrl === '/api/login') {
+    return next();
+  }
+  authenticateToken(req, res, next);
+});
+
 // Test DB Connection and Start Server
 const startServer = async () => {
   try {
@@ -74,7 +140,7 @@ app.get('/api/organization', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/organization', async (req, res) => {
+app.post('/api/organization', isAdmin, async (req, res) => {
   const { 
     org_name, 
     org_description, 
@@ -102,7 +168,7 @@ app.post('/api/organization', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/organization', async (req, res) => {
+app.put('/api/organization', isAdmin, async (req, res) => {
   const { 
     org_id,
     org_name, 
@@ -133,7 +199,7 @@ app.put('/api/organization', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/organization/:org_id', async (req, res) => {
+app.delete('/api/organization/:org_id', isAdmin, async (req, res) => {
   const { org_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM organization WHERE org_id = $1 RETURNING *', [org_id]);
@@ -154,18 +220,52 @@ app.delete('/api/organization/:org_id', async (req, res) => {
 // GET ALL OR ONE
 app.get('/api/lines', async (req, res) => {
   const { line_id } = req.query;
+  const user_type = req.user.user_type;
   try {
     if (line_id === 'ALL') {
-      const result = await pool.query(`
-        SELECT l.*, o.org_name 
-        FROM lines l 
-        LEFT JOIN organization o ON l.org_id = o.org_id 
-        ORDER BY l.created_at DESC
-      `);
+      let result;
+      if (user_type === 'ADMIN') {
+        result = await pool.query(`
+          SELECT l.*, o.org_name 
+          FROM lines l 
+          LEFT JOIN organization o ON l.org_id = o.org_id 
+          ORDER BY l.created_at DESC
+        `);
+      } else if (user_type === 'CLIENT_USER') {
+        result = await pool.query(`
+          SELECT l.*, o.org_name 
+          FROM lines l 
+          LEFT JOIN organization o ON l.org_id = o.org_id 
+          WHERE l.org_id = $1
+          ORDER BY l.created_at DESC
+        `, [req.user.org_id]);
+      } else { // USER
+        result = await pool.query(`
+          SELECT l.*, o.org_name 
+          FROM lines l 
+          LEFT JOIN organization o ON l.org_id = o.org_id 
+          JOIN serviceprovider_lines spl ON l.line_id = spl.line_id
+          WHERE spl.sp_id = $1
+          ORDER BY l.created_at DESC
+        `, [req.user.sp_id]);
+      }
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM lines WHERE line_id = $1', [line_id]);
-      res.json(result.rows[0]);
+      const line = result.rows[0];
+      if (!line) {
+        return res.status(404).json({ error: 'Line not found' });
+      }
+      if (user_type === 'CLIENT_USER' && String(line.org_id) !== String(req.user.org_id)) {
+        return res.status(403).json({ error: 'Forbidden: You do not have access to this line' });
+      }
+      if (user_type === 'USER') {
+        const check = await pool.query('SELECT 1 FROM serviceprovider_lines WHERE line_id = $1 AND sp_id = $2', [line_id, req.user.sp_id]);
+        if (check.rows.length === 0) {
+          return res.status(403).json({ error: 'Forbidden: You do not have access to this line' });
+        }
+      }
+      res.json(line);
     }
   } catch (err) {
     console.error(err.message);
@@ -174,7 +274,7 @@ app.get('/api/lines', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/lines', async (req, res) => {
+app.post('/api/lines', isAdmin, async (req, res) => {
   const { 
     org_id, 
     line_name, 
@@ -202,7 +302,7 @@ app.post('/api/lines', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/lines', async (req, res) => {
+app.put('/api/lines', isAdmin, async (req, res) => {
   const { 
     line_id,
     org_id, 
@@ -234,7 +334,7 @@ app.put('/api/lines', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/lines/:line_id', async (req, res) => {
+app.delete('/api/lines/:line_id', isAdmin, async (req, res) => {
   const { line_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM lines WHERE line_id = $1 RETURNING *', [line_id]);
@@ -300,7 +400,7 @@ app.get('/api/service-providers', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/service-providers', async (req, res) => {
+app.post('/api/service-providers', isAdmin, async (req, res) => {
   const { 
     sp_name, 
     service_category, 
@@ -327,7 +427,7 @@ app.post('/api/service-providers', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/service-providers', async (req, res) => {
+app.put('/api/service-providers', isAdmin, async (req, res) => {
   const { 
     sp_id,
     sp_name, 
@@ -358,7 +458,7 @@ app.put('/api/service-providers', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/service-providers/:sp_id', async (req, res) => {
+app.delete('/api/service-providers/:sp_id', isAdmin, async (req, res) => {
   const { sp_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM serviceprovider WHERE sp_id = $1 RETURNING *', [sp_id]);
@@ -378,29 +478,55 @@ app.delete('/api/service-providers/:sp_id', async (req, res) => {
 
 // GET ALL OR ONE
 app.get('/api/users', async (req, res) => {
-  const { user_id, sp_id, user_type } = req.query;
+  const { user_id, sp_id } = req.query;
+  const user_type = req.user.user_type;
 
-  // RBAC: CLIENT_USER cannot see the list
+  // RBAC: CLIENT_USER cannot see the full list
   if (user_type === 'CLIENT_USER' && user_id === 'ALL') {
     return res.status(403).json({ error: 'Forbidden: Client users cannot view the full list' });
   }
 
   try {
     if (user_id === 'ALL') {
-      const result = await pool.query(`
-        SELECT u.*, l.line_name, sp.sp_name 
-        FROM "Users" u
-        LEFT JOIN lines l ON u.line_id = l.line_id
-        LEFT JOIN serviceprovider sp ON u.sp_id = sp.sp_id
-        ORDER BY u.user_id DESC
-      `);
+      // If regular USER, filter to only return users in their own Service Provider
+      let result;
+      if (user_type === 'ADMIN') {
+        result = await pool.query(`
+          SELECT u.*, l.line_name, sp.sp_name 
+          FROM "Users" u
+          LEFT JOIN lines l ON u.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON u.sp_id = sp.sp_id
+          ORDER BY u.user_id DESC
+        `);
+      } else {
+        result = await pool.query(`
+          SELECT u.*, l.line_name, sp.sp_name 
+          FROM "Users" u
+          LEFT JOIN lines l ON u.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON u.sp_id = sp.sp_id
+          WHERE u.sp_id = $1
+          ORDER BY u.user_id DESC
+        `, [req.user.sp_id]);
+      }
       res.json(result.rows);
     } else if (sp_id) {
+      // If regular USER, they cannot query another SP's users
+      if (user_type === 'USER' && String(sp_id) !== String(req.user.sp_id)) {
+        return res.status(403).json({ error: 'Forbidden: You cannot access another service provider\'s users' });
+      }
       const result = await pool.query('SELECT * FROM "Users" WHERE sp_id = $1', [sp_id]);
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM "Users" WHERE user_id = $1', [user_id]);
-      res.json(result.rows[0]);
+      const user = result.rows[0];
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      // If regular USER, they cannot query another SP's users
+      if (user_type === 'USER' && String(user.sp_id) !== String(req.user.sp_id)) {
+        return res.status(403).json({ error: 'Forbidden: You cannot access another service provider\'s users' });
+      }
+      res.json(user);
     }
   } catch (err) {
     console.error(err.message);
@@ -409,7 +535,7 @@ app.get('/api/users', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/users', async (req, res) => {
+app.post('/api/users', isAdmin, async (req, res) => {
   const { 
     first_name, 
     last_name, 
@@ -441,7 +567,7 @@ app.post('/api/users', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/users', async (req, res) => {
+app.put('/api/users', isAdmin, async (req, res) => {
   const { 
     user_id,
     first_name, 
@@ -477,7 +603,7 @@ app.put('/api/users', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/users/:user_id', async (req, res) => {
+app.delete('/api/users/:user_id', isAdmin, async (req, res) => {
   const { user_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM "Users" WHERE user_id = $1 RETURNING *', [user_id]);
@@ -497,11 +623,12 @@ app.delete('/api/users/:user_id', async (req, res) => {
 
 // GET ALL OR ONE
 app.get('/api/client-users', async (req, res) => {
-  const { client_user_id, org_id, user_type } = req.query;
+  const { client_user_id, org_id } = req.query;
+  const user_type = req.user.user_type;
   
-  // RBAC: CLIENT_USER cannot see the list
-  if (user_type === 'CLIENT_USER' && client_user_id === 'ALL') {
-    return res.status(403).json({ error: 'Forbidden: Client users cannot view the full list' });
+  // RBAC: Non-admins cannot see the full list of client users
+  if (user_type !== 'ADMIN' && client_user_id === 'ALL') {
+    return res.status(403).json({ error: 'Forbidden: You cannot view the full list' });
   }
 
   try {
@@ -515,11 +642,23 @@ app.get('/api/client-users', async (req, res) => {
       `);
       res.json(result.rows);
     } else if (org_id) {
+      // If CLIENT_USER, verify they are only querying their own organization
+      if (user_type === 'CLIENT_USER' && String(org_id) !== String(req.user.org_id)) {
+        return res.status(403).json({ error: 'Forbidden: You cannot access client users of another organization' });
+      }
       const result = await pool.query('SELECT * FROM "Client_Users" WHERE org_id = $1', [org_id]);
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM "Client_Users" WHERE client_user_id = $1', [client_user_id]);
-      res.json(result.rows[0]);
+      const clientUser = result.rows[0];
+      if (!clientUser) {
+        return res.status(404).json({ error: 'Client User not found' });
+      }
+      // If CLIENT_USER, verify ownership/same organization
+      if (user_type === 'CLIENT_USER' && String(clientUser.org_id) !== String(req.user.org_id)) {
+        return res.status(403).json({ error: 'Forbidden: You cannot access client users of another organization' });
+      }
+      res.json(clientUser);
     }
   } catch (err) {
     console.error(err.message);
@@ -528,7 +667,7 @@ app.get('/api/client-users', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/client-users', async (req, res) => {
+app.post('/api/client-users', isAdmin, async (req, res) => {
   const { 
     first_name, 
     last_name, 
@@ -560,7 +699,7 @@ app.post('/api/client-users', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/client-users', async (req, res) => {
+app.put('/api/client-users', isAdmin, async (req, res) => {
   const { 
     client_user_id,
     first_name, 
@@ -596,7 +735,7 @@ app.put('/api/client-users', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/client-users/:client_user_id', async (req, res) => {
+app.delete('/api/client-users/:client_user_id', isAdmin, async (req, res) => {
   const { client_user_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM "Client_Users" WHERE client_user_id = $1 RETURNING *', [client_user_id]);
@@ -620,16 +759,21 @@ app.post('/api/login', async (req, res) => {
     const userResult = await pool.query('SELECT * FROM "Users" WHERE username = $1 AND password = $2', [username, password]);
     if (userResult.rows.length > 0) {
       const user = userResult.rows[0];
+      const payload = {
+        id: user.user_id,
+        username: user.username,
+        user_type: 'USER',
+        sp_id: user.sp_id,
+        org_id: null
+      };
+      const token = generateToken(payload);
       return res.json({
         success: true,
         user: {
-          id: user.user_id,
-          username: user.username,
+          ...payload,
           first_name: user.first_name,
           last_name: user.last_name,
-          user_type: 'USER',
-          sp_id: user.sp_id,
-          org_id: null
+          token
         }
       });
     }
@@ -638,30 +782,40 @@ app.post('/api/login', async (req, res) => {
     const clientUserResult = await pool.query('SELECT * FROM "Client_Users" WHERE username = $1 AND password = $2', [username, password]);
     if (clientUserResult.rows.length > 0) {
       const clientUser = clientUserResult.rows[0];
+      const payload = {
+        id: clientUser.client_user_id,
+        username: clientUser.username,
+        user_type: 'CLIENT_USER',
+        sp_id: null,
+        org_id: clientUser.org_id
+      };
+      const token = generateToken(payload);
       return res.json({
         success: true,
         user: {
-          id: clientUser.client_user_id,
-          username: clientUser.username,
+          ...payload,
           first_name: clientUser.first_name,
           last_name: clientUser.last_name,
-          user_type: 'CLIENT_USER',
-          sp_id: null,
-          org_id: clientUser.org_id
+          token
         }
       });
     }
 
     // 3. Special case for hardcoded Admin
     if (username === 'Admin' && password === 'admin22') {
+      const payload = {
+        id: 0,
+        username: 'Admin',
+        user_type: 'ADMIN'
+      };
+      const token = generateToken(payload);
       return res.json({
         success: true,
         user: {
-          id: 0,
-          username: 'Admin',
+          ...payload,
           first_name: 'System',
           last_name: 'Admin',
-          user_type: 'ADMIN'
+          token
         }
       });
     }
@@ -680,19 +834,54 @@ app.post('/api/login', async (req, res) => {
 // GET ALL OR ONE
 app.get('/api/kpi-categories', async (req, res) => {
   const { kpi_main_cat_id } = req.query;
+  const user_type = req.user.user_type;
   try {
     if (kpi_main_cat_id === 'ALL') {
-      const result = await pool.query(`
-        SELECT k.*, l.line_name, sp.sp_name 
-        FROM "KPI_Categories" k
-        LEFT JOIN lines l ON k.line_id = l.line_id
-        LEFT JOIN serviceprovider sp ON k.sp_id = sp.sp_id
-        ORDER BY k.kpi_main_cat_id DESC
-      `);
+      let result;
+      if (user_type === 'ADMIN') {
+        result = await pool.query(`
+          SELECT k.*, l.line_name, sp.sp_name 
+          FROM "KPI_Categories" k
+          LEFT JOIN lines l ON k.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON k.sp_id = sp.sp_id
+          ORDER BY k.kpi_main_cat_id DESC
+        `);
+      } else if (user_type === 'CLIENT_USER') {
+        result = await pool.query(`
+          SELECT k.*, l.line_name, sp.sp_name 
+          FROM "KPI_Categories" k
+          LEFT JOIN lines l ON k.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON k.sp_id = sp.sp_id
+          WHERE l.org_id = $1
+          ORDER BY k.kpi_main_cat_id DESC
+        `, [req.user.org_id]);
+      } else { // USER
+        result = await pool.query(`
+          SELECT k.*, l.line_name, sp.sp_name 
+          FROM "KPI_Categories" k
+          LEFT JOIN lines l ON k.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON k.sp_id = sp.sp_id
+          WHERE k.sp_id = $1
+          ORDER BY k.kpi_main_cat_id DESC
+        `, [req.user.sp_id]);
+      }
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM "KPI_Categories" WHERE kpi_main_cat_id = $1', [kpi_main_cat_id]);
-      res.json(result.rows[0]);
+      const category = result.rows[0];
+      if (!category) {
+        return res.status(404).json({ error: 'KPI Category not found' });
+      }
+      // Check access
+      if (user_type === 'CLIENT_USER') {
+        const checkLine = await pool.query('SELECT org_id FROM lines WHERE line_id = $1', [category.line_id]);
+        if (checkLine.rows.length === 0 || String(checkLine.rows[0].org_id) !== String(req.user.org_id)) {
+          return res.status(403).json({ error: 'Forbidden: You do not have access to this category' });
+        }
+      } else if (user_type === 'USER' && String(category.sp_id) !== String(req.user.sp_id)) {
+        return res.status(403).json({ error: 'Forbidden: You do not have access to this category' });
+      }
+      res.json(category);
     }
   } catch (err) {
     console.error(err.message);
@@ -701,7 +890,7 @@ app.get('/api/kpi-categories', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/kpi-categories', async (req, res) => {
+app.post('/api/kpi-categories', isAdmin, async (req, res) => {
   const { 
     weight, 
     kpi_status, 
@@ -728,7 +917,7 @@ app.post('/api/kpi-categories', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/kpi-categories', async (req, res) => {
+app.put('/api/kpi-categories', isAdmin, async (req, res) => {
   const { 
     kpi_main_cat_id,
     weight, 
@@ -759,7 +948,7 @@ app.put('/api/kpi-categories', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/kpi-categories/:kpi_main_cat_id', async (req, res) => {
+app.delete('/api/kpi-categories/:kpi_main_cat_id', isAdmin, async (req, res) => {
   const { kpi_main_cat_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM "KPI_Categories" WHERE kpi_main_cat_id = $1 RETURNING *', [kpi_main_cat_id]);
@@ -780,20 +969,57 @@ app.delete('/api/kpi-categories/:kpi_main_cat_id', async (req, res) => {
 // GET ALL OR ONE
 app.get('/api/kpi-sub-categories', async (req, res) => {
   const { sub_category_id } = req.query;
+  const user_type = req.user.user_type;
   try {
     if (sub_category_id === 'ALL') {
-      const result = await pool.query(`
-        SELECT sc.*, mc.kpi_name as main_category_name, l.line_name, sp.sp_name 
-        FROM "KPI_Sub_Categories" sc
-        LEFT JOIN "KPI_Categories" mc ON sc.kpi_main_cat_id = mc.kpi_main_cat_id
-        LEFT JOIN lines l ON sc.line_id = l.line_id
-        LEFT JOIN serviceprovider sp ON sc.sp_id = sp.sp_id
-        ORDER BY sc.sub_category_id DESC
-      `);
+      let result;
+      if (user_type === 'ADMIN') {
+        result = await pool.query(`
+          SELECT sc.*, mc.kpi_name as main_category_name, l.line_name, sp.sp_name 
+          FROM "KPI_Sub_Categories" sc
+          LEFT JOIN "KPI_Categories" mc ON sc.kpi_main_cat_id = mc.kpi_main_cat_id
+          LEFT JOIN lines l ON sc.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON sc.sp_id = sp.sp_id
+          ORDER BY sc.sub_category_id DESC
+        `);
+      } else if (user_type === 'CLIENT_USER') {
+        result = await pool.query(`
+          SELECT sc.*, mc.kpi_name as main_category_name, l.line_name, sp.sp_name 
+          FROM "KPI_Sub_Categories" sc
+          LEFT JOIN "KPI_Categories" mc ON sc.kpi_main_cat_id = mc.kpi_main_cat_id
+          LEFT JOIN lines l ON sc.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON sc.sp_id = sp.sp_id
+          WHERE l.org_id = $1
+          ORDER BY sc.sub_category_id DESC
+        `, [req.user.org_id]);
+      } else { // USER
+        result = await pool.query(`
+          SELECT sc.*, mc.kpi_name as main_category_name, l.line_name, sp.sp_name 
+          FROM "KPI_Sub_Categories" sc
+          LEFT JOIN "KPI_Categories" mc ON sc.kpi_main_cat_id = mc.kpi_main_cat_id
+          LEFT JOIN lines l ON sc.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON sc.sp_id = sp.sp_id
+          WHERE sc.sp_id = $1
+          ORDER BY sc.sub_category_id DESC
+        `, [req.user.sp_id]);
+      }
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM "KPI_Sub_Categories" WHERE sub_category_id = $1', [sub_category_id]);
-      res.json(result.rows[0]);
+      const subCategory = result.rows[0];
+      if (!subCategory) {
+        return res.status(404).json({ error: 'KPI Sub-Category not found' });
+      }
+      // Check access
+      if (user_type === 'CLIENT_USER') {
+        const checkLine = await pool.query('SELECT org_id FROM lines WHERE line_id = $1', [subCategory.line_id]);
+        if (checkLine.rows.length === 0 || String(checkLine.rows[0].org_id) !== String(req.user.org_id)) {
+          return res.status(403).json({ error: 'Forbidden: You do not have access to this sub-category' });
+        }
+      } else if (user_type === 'USER' && String(subCategory.sp_id) !== String(req.user.sp_id)) {
+        return res.status(403).json({ error: 'Forbidden: You do not have access to this sub-category' });
+      }
+      res.json(subCategory);
     }
   } catch (err) {
     console.error(err.message);
@@ -802,7 +1028,7 @@ app.get('/api/kpi-sub-categories', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/kpi-sub-categories', async (req, res) => {
+app.post('/api/kpi-sub-categories', isAdmin, async (req, res) => {
   const { 
     kpi_main_cat_id, 
     sub_category_name, 
@@ -828,7 +1054,7 @@ app.post('/api/kpi-sub-categories', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/kpi-sub-categories', async (req, res) => {
+app.put('/api/kpi-sub-categories', isAdmin, async (req, res) => {
   const { 
     sub_category_id,
     kpi_main_cat_id, 
@@ -858,7 +1084,7 @@ app.put('/api/kpi-sub-categories', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/kpi-sub-categories/:sub_category_id', async (req, res) => {
+app.delete('/api/kpi-sub-categories/:sub_category_id', isAdmin, async (req, res) => {
   const { sub_category_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM "KPI_Sub_Categories" WHERE sub_category_id = $1 RETURNING *', [sub_category_id]);
@@ -879,21 +1105,60 @@ app.delete('/api/kpi-sub-categories/:sub_category_id', async (req, res) => {
 // GET ALL OR ONE
 app.get('/api/fault-level-categories', async (req, res) => {
   const { fl_category_id } = req.query;
+  const user_type = req.user.user_type;
   try {
     if (fl_category_id === 'ALL') {
-      const result = await pool.query(`
-        SELECT fl.*, mc.kpi_name as main_category_name, sc.sub_category_name, sp.sp_name, l.line_name 
-        FROM fault_level_category fl
-        LEFT JOIN "KPI_Categories" mc ON fl.kpi_main_cat_id = mc.kpi_main_cat_id
-        LEFT JOIN "KPI_Sub_Categories" sc ON fl.kpi_sub_category_id = sc.sub_category_id
-        LEFT JOIN serviceprovider sp ON fl.sp_id = sp.sp_id
-        LEFT JOIN lines l ON fl.line_id = l.line_id
-        ORDER BY fl.fl_category_id DESC
-      `);
+      let result;
+      if (user_type === 'ADMIN') {
+        result = await pool.query(`
+          SELECT fl.*, mc.kpi_name as main_category_name, sc.sub_category_name, sp.sp_name, l.line_name 
+          FROM fault_level_category fl
+          LEFT JOIN "KPI_Categories" mc ON fl.kpi_main_cat_id = mc.kpi_main_cat_id
+          LEFT JOIN "KPI_Sub_Categories" sc ON fl.kpi_sub_category_id = sc.sub_category_id
+          LEFT JOIN serviceprovider sp ON fl.sp_id = sp.sp_id
+          LEFT JOIN lines l ON fl.line_id = l.line_id
+          ORDER BY fl.fl_category_id DESC
+        `);
+      } else if (user_type === 'CLIENT_USER') {
+        result = await pool.query(`
+          SELECT fl.*, mc.kpi_name as main_category_name, sc.sub_category_name, sp.sp_name, l.line_name 
+          FROM fault_level_category fl
+          LEFT JOIN "KPI_Categories" mc ON fl.kpi_main_cat_id = mc.kpi_main_cat_id
+          LEFT JOIN "KPI_Sub_Categories" sc ON fl.kpi_sub_category_id = sc.sub_category_id
+          LEFT JOIN serviceprovider sp ON fl.sp_id = sp.sp_id
+          LEFT JOIN lines l ON fl.line_id = l.line_id
+          WHERE l.org_id = $1
+          ORDER BY fl.fl_category_id DESC
+        `, [req.user.org_id]);
+      } else { // USER
+        result = await pool.query(`
+          SELECT fl.*, mc.kpi_name as main_category_name, sc.sub_category_name, sp.sp_name, l.line_name 
+          FROM fault_level_category fl
+          LEFT JOIN "KPI_Categories" mc ON fl.kpi_main_cat_id = mc.kpi_main_cat_id
+          LEFT JOIN "KPI_Sub_Categories" sc ON fl.kpi_sub_category_id = sc.sub_category_id
+          LEFT JOIN serviceprovider sp ON fl.sp_id = sp.sp_id
+          LEFT JOIN lines l ON fl.line_id = l.line_id
+          WHERE fl.sp_id = $1
+          ORDER BY fl.fl_category_id DESC
+        `, [req.user.sp_id]);
+      }
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM fault_level_category WHERE fl_category_id = $1', [fl_category_id]);
-      res.json(result.rows[0]);
+      const flCategory = result.rows[0];
+      if (!flCategory) {
+        return res.status(404).json({ error: 'Fault level category not found' });
+      }
+      // Check access
+      if (user_type === 'CLIENT_USER') {
+        const checkLine = await pool.query('SELECT org_id FROM lines WHERE line_id = $1', [flCategory.line_id]);
+        if (checkLine.rows.length === 0 || String(checkLine.rows[0].org_id) !== String(req.user.org_id)) {
+          return res.status(403).json({ error: 'Forbidden: You do not have access to this fault level category' });
+        }
+      } else if (user_type === 'USER' && String(flCategory.sp_id) !== String(req.user.sp_id)) {
+        return res.status(403).json({ error: 'Forbidden: You do not have access to this fault level category' });
+      }
+      res.json(flCategory);
     }
   } catch (err) {
     console.error(err.message);
@@ -902,7 +1167,7 @@ app.get('/api/fault-level-categories', async (req, res) => {
 });
 
 // CREATE
-app.post('/api/fault-level-categories', async (req, res) => {
+app.post('/api/fault-level-categories', isAdmin, async (req, res) => {
   const { 
     kpi_main_cat_id, 
     kpi_sub_category_id, 
@@ -930,7 +1195,7 @@ app.post('/api/fault-level-categories', async (req, res) => {
 });
 
 // UPDATE
-app.put('/api/fault-level-categories', async (req, res) => {
+app.put('/api/fault-level-categories', isAdmin, async (req, res) => {
   const { 
     fl_category_id,
     kpi_main_cat_id, 
@@ -962,7 +1227,7 @@ app.put('/api/fault-level-categories', async (req, res) => {
 });
 
 // DELETE
-app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
+app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, res) => {
   const { fl_category_id } = req.params;
   try {
     const result = await pool.query('DELETE FROM fault_level_category WHERE fl_category_id = $1 RETURNING *', [fl_category_id]);
@@ -982,7 +1247,8 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
 
     // GET ALL TICKETS (with Joins)
     app.get('/api/tickets', async (req, res) => {
-    const { user_id, user_type } = req.query;
+    const user_id = req.user.id;
+    const user_type = req.user.user_type;
     try {
     let query = `
       SELECT t.*, 
@@ -1007,15 +1273,18 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       LEFT JOIN "KPI_Sub_Categories" sc ON t.kpi_sub_category_id = sc.sub_category_id
       LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'CLIENT_USER'
       LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'CLIENT_USER'
-      LEFT JOIN "Users" ru ON t.reported_to = ru.user_id
-      LEFT JOIN "Client_Users" rcu ON t.reported_to = rcu.client_user_id
+      LEFT JOIN "Users" ru ON t.reported_to = ru.user_id AND t.reported_to_type = 'USER'
+      LEFT JOIN "Client_Users" rcu ON t.reported_to = rcu.client_user_id AND t.reported_to_type = 'CLIENT_USER'
     `;
 
     const params = [];
-    if (user_id && user_id !== '0') {
-      query += ` WHERE (t.created_by = $1 AND t.created_by_type = $2) 
-                    OR (t.reported_to = $1 AND t.reported_to_type = $2)`;
-      params.push(user_id, user_type || 'USER');
+    if (user_type !== 'ADMIN') {
+      query += ` WHERE ((t.created_by = $1 AND t.created_by_type = $2) 
+                    OR (t.reported_to = $1 AND t.reported_to_type = $2))
+                    AND COALESCE(t.org_id, 0) != 1 AND COALESCE(t.sp_id, 0) != 1`;
+      params.push(user_id, user_type);
+    } else {
+      query += ` WHERE COALESCE(t.org_id, 0) != 1 AND COALESCE(t.sp_id, 0) != 1`;
     }
 
     query += ` ORDER BY t.created_at DESC`;
@@ -1041,11 +1310,12 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     ticket_description, 
     sp_id,
     org_id,
-    created_by, // User ID of creator
-    created_by_type,
     reported_to,
     attachment
     } = req.body;
+
+    const created_by = req.user.id;
+    const created_by_type = req.user.user_type;
 
     const client = await pool.connect();
 
@@ -1063,10 +1333,10 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
       [
         nextId, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, 
         ticket_status, ticket_description, sp_id, org_id, 
-        created_by || null, created_by_type || 'USER', 
+        created_by, created_by_type, 
         reported_to || null, created_by_type === 'CLIENT_USER' ? 'USER' : 'CLIENT_USER', 
         attachment || null,
-        created_by || null
+        created_by
       ]
     );
 
@@ -1074,7 +1344,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     await client.query(
       `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      ['Ticket Created: ' + ticket_description, ticket_number, 1, sp_id, line_id, created_by || null, created_by_type || 'USER', attachment || null] 
+      ['Ticket Created: ' + ticket_description, ticket_number, 1, sp_id, line_id, created_by, created_by_type, attachment || null] 
     );
 
     await client.query('COMMIT');
@@ -1096,10 +1366,11 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
         remarks, // This will go into the trail
         reported_to, // This allows sending back or reassigning
         reported_to_type,
-        updated_by, // User ID of who is making the change
-        updated_by_type, // 'USER' or 'CLIENT_USER'
         attachment
       } = req.body;
+
+      const updated_by = req.user.id;
+      const updated_by_type = req.user.user_type;
 
       const client = await pool.connect();
 
@@ -1113,6 +1384,14 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
           return res.status(404).json({ error: 'Ticket not found' });
         }
         const ticket = currentTicketResult.rows[0];
+
+        // Authorization check: Must be admin, creator, or assignee
+        if (req.user.user_type !== 'ADMIN' && 
+            !(String(ticket.created_by) === String(req.user.id) && ticket.created_by_type === req.user.user_type) && 
+            !(String(ticket.reported_to) === String(req.user.id) && ticket.reported_to_type === req.user.user_type)) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Forbidden: You do not have permission to modify this ticket' });
+        }
 
         // 2. Update Tickets table (Reset is_read=FALSE, update last_action_by, update reported_to_type)
         const updateResult = await client.query(
@@ -1132,7 +1411,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
         await client.query(
           `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [remarks || `Ticket status updated to ${ticket_status}`, ticket.ticket_number, 1, ticket.sp_id, ticket.line_id, updated_by || null, updated_by_type || 'USER', attachment || null]
+          [remarks || `Ticket status updated to ${ticket_status}`, ticket.ticket_number, 1, ticket.sp_id, ticket.line_id, updated_by, updated_by_type, attachment || null]
         );
 
         await client.query('COMMIT');
@@ -1150,10 +1429,19 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     app.delete('/api/tickets/:ticket_id', async (req, res) => {
       const { ticket_id } = req.params;
       try {
-        const result = await pool.query('DELETE FROM "Tickets" WHERE ticket_id = $1 RETURNING *', [ticket_id]);
-        if (result.rows.length === 0) {
+        const ticketResult = await pool.query('SELECT * FROM "Tickets" WHERE ticket_id = $1', [ticket_id]);
+        if (ticketResult.rows.length === 0) {
           return res.status(404).json({ error: 'Ticket not found' });
         }
+        const ticket = ticketResult.rows[0];
+
+        // Authorization check: Only admin or ticket creator can delete
+        if (req.user.user_type !== 'ADMIN' && 
+            !(String(ticket.created_by) === String(req.user.id) && ticket.created_by_type === req.user.user_type)) {
+          return res.status(403).json({ error: 'Forbidden: You do not have permission to delete this ticket' });
+        }
+
+        const result = await pool.query('DELETE FROM "Tickets" WHERE ticket_id = $1 RETURNING *', [ticket_id]);
         res.json({ message: 'Ticket deleted successfully' });
       } catch (err) {
         console.error(err.message);
@@ -1165,14 +1453,28 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     app.get('/api/tickets/trail/:ticket_no', async (req, res) => {
     const { ticket_no } = req.params;
     try {
+    // 1. Get ticket info to check authorization
+    const ticketResult = await pool.query('SELECT * FROM "Tickets" WHERE ticket_number = $1', [ticket_no]);
+    if (ticketResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+    const ticket = ticketResult.rows[0];
+
+    // Authorization check
+    if (req.user.user_type !== 'ADMIN' && 
+        !(String(ticket.created_by) === String(req.user.id) && ticket.created_by_type === req.user.user_type) && 
+        !(String(ticket.reported_to) === String(req.user.id) && ticket.reported_to_type === req.user.user_type)) {
+      return res.status(403).json({ error: 'Forbidden: You do not have permission to view this ticket trail' });
+    }
+
     const result = await pool.query(`
       SELECT tt.*, 
              COALESCE(u.first_name || ' ' || COALESCE(u.last_name, ''), 
                       cu.first_name || ' ' || COALESCE(cu.last_name, ''),
                       'System') as creator_name
       FROM "Ticket_trail" tt
-      LEFT JOIN "Users" u ON tt.created_by = u.user_id
-      LEFT JOIN "Client_Users" cu ON tt.created_by = cu.client_user_id
+      LEFT JOIN "Users" u ON tt.created_by = u.user_id AND tt.created_by_type != 'CLIENT_USER'
+      LEFT JOIN "Client_Users" cu ON tt.created_by = cu.client_user_id AND tt.created_by_type = 'CLIENT_USER'
       WHERE tt.ticket_no = $1 
       ORDER BY tt.created_at ASC
     `, [ticket_no]);
@@ -1200,14 +1502,15 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
      * NOTIFICATION & READ STATUS ENDPOINTS
      */
     app.get('/api/tickets/unread-count', async (req, res) => {
-      const { user_id, user_type } = req.query;
+      const user_id = req.user.id;
+      const user_type = req.user.user_type;
       try {
-        let query = 'SELECT COUNT(*) FROM "Tickets" WHERE is_read = FALSE';
+        let query = 'SELECT COUNT(*) FROM "Tickets" WHERE is_read = FALSE AND COALESCE(org_id, 0) != 1 AND COALESCE(sp_id, 0) != 1';
         let params = [];
 
         if (user_type !== 'ADMIN') {
           query += ' AND reported_to = $1 AND reported_to_type = $2';
-          params = [user_id, user_type || 'USER'];
+          params = [user_id, user_type];
         }
 
         const result = await pool.query(query, params);
@@ -1220,11 +1523,12 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
 
     app.put('/api/tickets/mark-read/:ticket_id', async (req, res) => {
       const { ticket_id } = req.params;
-      const { user_id, user_type } = req.body;
+      const user_id = req.user.id;
+      const user_type = req.user.user_type;
       try {
         await pool.query(
-          'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1 AND reported_to = $2 AND reported_to_type = $3',
-          [ticket_id, user_id, user_type || 'USER']
+          'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1 AND reported_to = $2 AND reported_to_type = $3 AND COALESCE(org_id, 0) != 1 AND COALESCE(sp_id, 0) != 1',
+          [ticket_id, user_id, user_type]
         );
         res.json({ success: true });
       } catch (err) {
@@ -1234,14 +1538,15 @@ app.delete('/api/fault-level-categories/:fl_category_id', async (req, res) => {
     });
 
     app.put('/api/tickets/mark-all-read', async (req, res) => {
-      const { user_id, user_type } = req.body;
+      const user_id = req.user.id;
+      const user_type = req.user.user_type;
       try {
-        let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE';
+        let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE AND COALESCE(org_id, 0) != 1 AND COALESCE(sp_id, 0) != 1';
         let params = [];
 
         if (user_type !== 'ADMIN') {
           query += ' AND reported_to = $1 AND reported_to_type = $2';
-          params = [user_id, user_type || 'USER'];
+          params = [user_id, user_type];
         }
 
         await pool.query(query, params);

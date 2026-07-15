@@ -40,7 +40,7 @@ const Header: React.FC<HeaderProps> = ({ collapsed, onToggle, onLogout }) => {
     },
   ];
 
-  const userString = localStorage.getItem('user');
+  const userString = sessionStorage.getItem('user');
   const user = userString ? JSON.parse(userString) : { first_name: 'Admin' };
 
   return (

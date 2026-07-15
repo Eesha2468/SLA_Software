@@ -27,12 +27,12 @@ const NewTicket: React.FC = () => {
   const [personnel, setPersonnel] = useState<any[]>([]);
   const [faultLevels, setFaultLevels] = useState<FaultLevelCategoryDTO[]>([]);
 
-  const userString = localStorage.getItem('user');
+  const userString = sessionStorage.getItem('user');
   const loggedInUser = (() => {
     try {
       return userString ? JSON.parse(userString) : null;
     } catch (e) {
-      console.error("Failed to parse user from localStorage", e);
+      console.error("Failed to parse user from sessionStorage", e);
       return null;
     }
   })();

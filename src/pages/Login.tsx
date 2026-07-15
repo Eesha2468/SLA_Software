@@ -31,7 +31,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
       if (response.ok && data.success) {
         message.success("Login successful!");
-        localStorage.setItem('user', JSON.stringify(data.user));
+        sessionStorage.setItem('user', JSON.stringify(data.user));
         onLogin();
         navigate("/dashboard", { replace: true });
       } else {
