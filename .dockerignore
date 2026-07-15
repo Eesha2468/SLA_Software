@@ -7,7 +7,6 @@ dist
 .vscode
 Dockerfile
 docker-compose.yml
-nginx.conf
 README.md
 server/node_modules
 server/.env
