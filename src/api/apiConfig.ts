@@ -30,7 +30,7 @@ export const getApiUrl = (path: string): URL => {
 
 // Global Fetch Interceptor to attach JWT token
 const originalFetch = window.fetch;
-window.fetch = async (input, init) => {
+window.fetch = function (input, init) {
   const userStr = sessionStorage.getItem('user');
   if (userStr) {
     try {
@@ -49,20 +49,22 @@ window.fetch = async (input, init) => {
         const isLogin = urlString.includes('/login');
 
         if (isApi && !isLogin) {
-          init = init || {};
+          // Clone init to prevent modifying frozen/sealed objects in strict mode
+          const newInit = { ...init };
           let headers: Headers;
-          if (init.headers instanceof Headers) {
-            headers = init.headers;
-          } else if (Array.isArray(init.headers)) {
-            headers = new Headers(init.headers);
+          if (newInit.headers instanceof Headers) {
+            headers = newInit.headers;
+          } else if (Array.isArray(newInit.headers)) {
+            headers = new Headers(newInit.headers);
           } else {
-            headers = new Headers(init.headers || {});
+            headers = new Headers(newInit.headers || {});
           }
 
           if (!headers.has('Authorization')) {
             headers.set('Authorization', `Bearer ${user.token}`);
           }
-          init.headers = headers;
+          newInit.headers = headers;
+          return originalFetch(input, newInit);
         }
       }
     } catch (e) {
