@@ -46,7 +46,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
     // Refresh count every 15 seconds for real-time feel
     const interval = setInterval(getTicketCount, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [location.pathname]);
 
   const handleMenuClick = (e: { key: string }) => {
     if (e.key.startsWith('/')) {
@@ -66,9 +66,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
       label: (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <span>New Ticket</span>
-          {!collapsed && ticketCount > 0 && (
+          {!collapsed && (
             <Badge 
               count={ticketCount} 
+              showZero
               size="small" 
               style={{ 
                 backgroundColor: '#ffffff', 

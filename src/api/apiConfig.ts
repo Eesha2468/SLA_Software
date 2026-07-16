@@ -27,3 +27,47 @@ export const getApiUrl = (path: string): URL => {
   
   return new URL(finalUrl);
 };
+
+// Global Fetch Interceptor to attach JWT token
+const originalFetch = window.fetch;
+window.fetch = async (input, init) => {
+  const userStr = sessionStorage.getItem('user');
+  if (userStr) {
+    try {
+      const user = JSON.parse(userStr);
+      if (user && user.token) {
+        let urlString = '';
+        if (typeof input === 'string') {
+          urlString = input;
+        } else if (input instanceof URL) {
+          urlString = input.toString();
+        } else if (input && (input as any).url) {
+          urlString = (input as any).url;
+        }
+
+        const isApi = urlString.includes('/api/') || urlString.startsWith('/api/') || urlString.includes(API_BASE_URL);
+        const isLogin = urlString.includes('/login');
+
+        if (isApi && !isLogin) {
+          init = init || {};
+          let headers: Headers;
+          if (init.headers instanceof Headers) {
+            headers = init.headers;
+          } else if (Array.isArray(init.headers)) {
+            headers = new Headers(init.headers);
+          } else {
+            headers = new Headers(init.headers || {});
+          }
+
+          if (!headers.has('Authorization')) {
+            headers.set('Authorization', `Bearer ${user.token}`);
+          }
+          init.headers = headers;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to add auth header to fetch:', e);
+    }
+  }
+  return originalFetch(input, init);
+};

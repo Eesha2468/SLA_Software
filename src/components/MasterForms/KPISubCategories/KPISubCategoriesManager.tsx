@@ -109,7 +109,7 @@ const KPISubCategoriesManager: React.FC = () => {
 
   const columns = [
     { title: 'Service Provider', dataIndex: 'sp_name', key: 'sp_name' },
-    { title: 'Line', key: 'line_name', render: () => 'Orange Line/Airport Service' },
+    { title: 'Line', dataIndex: 'line_name', key: 'line_name' },
     { title: 'Main Category', dataIndex: 'main_category_name', key: 'main_category_name' },
     { title: 'Sub-Category Name', dataIndex: 'sub_category_name', key: 'sub_category_name' },
   ];

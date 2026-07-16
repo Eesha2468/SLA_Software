@@ -73,8 +73,8 @@ const authenticateToken = (req, res, next) => {
 };
 
 const isAdmin = (req, res, next) => {
-  if (!req.user || req.user.user_type !== 'ADMIN') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
+  if (!req.user || (req.user.user_type !== 'ADMIN' && req.user.user_type !== 'CLIENT_USER')) {
+    return res.status(403).json({ error: 'Forbidden: Admin or Client access required' });
   }
   next();
 };
@@ -762,7 +762,7 @@ app.post('/api/login', async (req, res) => {
       const payload = {
         id: user.user_id,
         username: user.username,
-        user_type: 'USER',
+        user_type: user.username === 'admin.tap' ? 'ADMIN' : 'USER',
         sp_id: user.sp_id,
         org_id: null
       };
@@ -1280,11 +1280,8 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
     const params = [];
     if (user_type !== 'ADMIN') {
       query += ` WHERE ((t.created_by = $1 AND t.created_by_type = $2) 
-                    OR (t.reported_to = $1 AND t.reported_to_type = $2))
-                    AND COALESCE(t.org_id, 0) != 1 AND COALESCE(t.sp_id, 0) != 1`;
+                    OR (t.reported_to = $1 AND t.reported_to_type = $2))`;
       params.push(user_id, user_type);
-    } else {
-      query += ` WHERE COALESCE(t.org_id, 0) != 1 AND COALESCE(t.sp_id, 0) != 1`;
     }
 
     query += ` ORDER BY t.created_at DESC`;
@@ -1505,7 +1502,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       const user_id = req.user.id;
       const user_type = req.user.user_type;
       try {
-        let query = 'SELECT COUNT(*) FROM "Tickets" WHERE is_read = FALSE AND COALESCE(org_id, 0) != 1 AND COALESCE(sp_id, 0) != 1';
+        let query = 'SELECT COUNT(*) FROM "Tickets" WHERE is_read = FALSE';
         let params = [];
 
         if (user_type !== 'ADMIN') {
@@ -1527,7 +1524,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       const user_type = req.user.user_type;
       try {
         await pool.query(
-          'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1 AND reported_to = $2 AND reported_to_type = $3 AND COALESCE(org_id, 0) != 1 AND COALESCE(sp_id, 0) != 1',
+          'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1 AND reported_to = $2 AND reported_to_type = $3',
           [ticket_id, user_id, user_type]
         );
         res.json({ success: true });
@@ -1541,7 +1538,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       const user_id = req.user.id;
       const user_type = req.user.user_type;
       try {
-        let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE AND COALESCE(org_id, 0) != 1 AND COALESCE(sp_id, 0) != 1';
+        let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE';
         let params = [];
 
         if (user_type !== 'ADMIN') {

@@ -104,7 +104,7 @@ const KPICategoriesManager: React.FC = () => {
   const columns = [
     { title: 'Service Provider', dataIndex: 'sp_name', key: 'sp_name' },
     { title: 'KPI Name', dataIndex: 'kpi_name', key: 'kpi_name' },
-    { title: 'Line', key: 'line_name', render: () => 'Orange Line/Airport Service' },
+    { title: 'Line', dataIndex: 'line_name', key: 'line_name' },
     { 
       title: 'KPI Status', 
       dataIndex: 'kpi_status', 

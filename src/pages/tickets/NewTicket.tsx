@@ -130,7 +130,7 @@ const NewTicket: React.FC = () => {
     }
   }, [selectedKpiCategory, selectedLine]);
 
-  const filteredFaultLevels = faultLevels.filter(fl => String(fl.kpi_sub_category_id) === String(selectedKpiSubCategory));
+  const filteredFaultLevels = faultLevels;
 
   const generateTicketNumber = (spId: number | string, lineId: number | string) => {
     const now = new Date();
@@ -303,8 +303,14 @@ const NewTicket: React.FC = () => {
                 <Select 
                   size="large"
                   placeholder="Select Fault Level"
-                  options={filteredFaultLevels.map(fl => ({ value: fl.fl_category_id, label: fl.fl_name || fl.fl_desc }))}
-                  disabled={!selectedKpiSubCategory}
+                  options={filteredFaultLevels.map(fl => {
+                    let label = fl.fl_name || fl.fl_desc || '';
+                    if (label.toLowerCase() === 'material') {
+                      label = 'Major';
+                    }
+                    return { value: Number(fl.fl_category_id), label };
+                  })}
+                  disabled={!selectedKpiCategory}
                   style={{ width: '100%' }}
                 />
               </Form.Item>

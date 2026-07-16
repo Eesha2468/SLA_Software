@@ -47,6 +47,8 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const filteredTickets = useMemo(() => {

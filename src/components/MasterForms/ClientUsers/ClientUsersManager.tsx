@@ -30,8 +30,10 @@ const ClientUsersManager: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      // If CLIENT_USER, we only fetch lines and orgs, but NOT client users list
-      const fetchUsersPromise = isClientUser ? Promise.resolve([]) : fetchClientUsers(undefined, loggedInUser?.user_type);
+      // If CLIENT_USER, fetch organization's client users
+      const fetchUsersPromise = isClientUser 
+        ? fetchClientUsers(loggedInUser.org_id, loggedInUser.user_type) 
+        : fetchClientUsers(undefined, loggedInUser?.user_type);
       
       const [usersData, linesData, orgData] = await Promise.all([
         fetchUsersPromise,
@@ -219,17 +221,15 @@ const ClientUsersManager: React.FC = () => {
           </Row>
         </Form>
       </Card>
-      {!isClientUser && (
-        <GenericList 
-          title="Client Users List" 
-          dataSource={records.map(r => ({ ...r, id: String(r.client_user_id) }))} 
-          columns={columns} 
-          onEdit={handleEdit} 
-          onDelete={handleDelete}
-          exportFilename="client_users" 
-          loading={loading}
-        />
-      )}
+      <GenericList 
+        title="Client Users List" 
+        dataSource={records.map(r => ({ ...r, id: String(r.client_user_id) }))} 
+        columns={columns} 
+        onEdit={handleEdit} 
+        onDelete={handleDelete}
+        exportFilename="client_users" 
+        loading={loading}
+      />
     </>
   );
 };
