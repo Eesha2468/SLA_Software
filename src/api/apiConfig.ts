@@ -28,48 +28,4 @@ export const getApiUrl = (path: string): URL => {
   return new URL(finalUrl);
 };
 
-// Global Fetch Interceptor to attach JWT token
-const originalFetch = window.fetch;
-window.fetch = function (input, init) {
-  const userStr = sessionStorage.getItem('user');
-  if (userStr) {
-    try {
-      const user = JSON.parse(userStr);
-      if (user && user.token) {
-        let urlString = '';
-        if (typeof input === 'string') {
-          urlString = input;
-        } else if (input instanceof URL) {
-          urlString = input.toString();
-        } else if (input && (input as any).url) {
-          urlString = (input as any).url;
-        }
-
-        const isApi = urlString.includes('/api/') || urlString.startsWith('/api/') || urlString.includes(API_BASE_URL);
-        const isLogin = urlString.includes('/login');
-
-        if (isApi && !isLogin) {
-          // Clone init to prevent modifying frozen/sealed objects in strict mode
-          const newInit = { ...init };
-          let headers: Headers;
-          if (newInit.headers instanceof Headers) {
-            headers = newInit.headers;
-          } else if (Array.isArray(newInit.headers)) {
-            headers = new Headers(newInit.headers);
-          } else {
-            headers = new Headers(newInit.headers || {});
-          }
-
-          if (!headers.has('Authorization')) {
-            headers.set('Authorization', `Bearer ${user.token}`);
-          }
-          newInit.headers = headers;
-          return originalFetch(input, newInit);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to add auth header to fetch:', e);
-    }
-  }
-  return originalFetch(input, init);
-};
+// Fetch interceptor is defined globally in src/main.tsx to guarantee early execution.
