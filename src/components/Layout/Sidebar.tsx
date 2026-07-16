@@ -27,6 +27,29 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
   const location = useLocation();
   const [openKeys, setOpenKeys] = useState<string[]>(['master-forms']);
   const [ticketCount, setTicketCount] = useState<number>(0);
+  const [systemName, setSystemName] = useState<string>(() => {
+    try {
+      const settings = sessionStorage.getItem('settings');
+      return settings ? JSON.parse(settings).system_name : 'SLA System';
+    } catch {
+      return 'SLA System';
+    }
+  });
+
+  useEffect(() => {
+    const handleSettingsUpdate = () => {
+      try {
+        const settings = sessionStorage.getItem('settings');
+        if (settings) {
+          setSystemName(JSON.parse(settings).system_name || 'SLA System');
+        }
+      } catch (e) {
+        console.error('Failed to sync system name', e);
+      }
+    };
+    window.addEventListener('settings-updated', handleSettingsUpdate);
+    return () => window.removeEventListener('settings-updated', handleSettingsUpdate);
+  }, []);
 
   const getTicketCount = async () => {
     try {
@@ -147,7 +170,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
               whiteSpace: 'nowrap',
             }}
           >
-            SLA System
+            {systemName}
           </span>
         )}
       </div>

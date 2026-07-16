@@ -93,6 +93,21 @@ const startServer = async () => {
     console.log('Connecting to database at:', process.env.DB_HOST);
     const client = await pool.connect();
     console.log('✅ Database connected successfully');
+    
+    // Initialize settings table if it doesn't exist
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS settings (
+        user_id VARCHAR(50) NOT NULL,
+        user_type VARCHAR(50) NOT NULL,
+        system_name VARCHAR(255) DEFAULT 'SLA Management System',
+        organization VARCHAR(255),
+        timezone VARCHAR(100) DEFAULT 'Asia/Karachi',
+        date_format VARCHAR(50) DEFAULT 'YYYY-MM-DD',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, user_type)
+      );
+    `);
+    console.log('✅ Settings table initialized/verified successfully');
     client.release();
 
     app.listen(port, '0.0.0.0', () => {
@@ -1551,6 +1566,87 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Failed to mark all tickets as read' });
+      }
+    });
+
+    /**
+     * USER-SPECIFIC SETTINGS ENDPOINTS
+     */
+    app.get('/api/settings', async (req, res) => {
+      const user_id = req.user.id;
+      const user_type = req.user.user_type;
+      const username = req.user.username;
+
+      try {
+        const result = await pool.query(
+          'SELECT * FROM settings WHERE user_id = $1 AND user_type = $2',
+          [String(user_id), user_type]
+        );
+
+        if (result.rows.length > 0) {
+          return res.json(result.rows[0]);
+        }
+
+        // Default Organization Names based on username fallback
+        let organization = 'TAP Trade and Projects';
+        if (username === 'admin.tap') {
+          organization = 'Trade And Projects';
+        } else if (username === 'CDA.operator') {
+          organization = 'Capital Development Authority';
+        } else {
+          // Dynamic lookup fallback
+          if (user_type === 'CLIENT_USER') {
+            const orgResult = await pool.query('SELECT org_name FROM organization WHERE org_id = $1', [req.user.org_id]);
+            if (orgResult.rows.length > 0) {
+              organization = orgResult.rows[0].org_name;
+            }
+          } else {
+            const spResult = await pool.query('SELECT sp_name FROM serviceprovider WHERE sp_id = $1', [req.user.sp_id]);
+            if (spResult.rows.length > 0) {
+              organization = spResult.rows[0].sp_name;
+            }
+          }
+        }
+
+        const insertResult = await pool.query(
+          `INSERT INTO settings (user_id, user_type, system_name, organization, timezone, date_format)
+           VALUES ($1, $2, 'SLA Management System', $3, 'Asia/Karachi', 'YYYY-MM-DD')
+           ON CONFLICT (user_id, user_type) DO UPDATE SET organization = EXCLUDED.organization
+           RETURNING *`,
+          [String(user_id), user_type, organization]
+        );
+
+        res.json(insertResult.rows[0]);
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error while fetching settings' });
+      }
+    });
+
+    app.post('/api/settings', async (req, res) => {
+      const user_id = req.user.id;
+      const user_type = req.user.user_type;
+      const { system_name, organization, timezone, date_format } = req.body;
+
+      try {
+        const result = await pool.query(
+          `INSERT INTO settings (user_id, user_type, system_name, organization, timezone, date_format, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())
+           ON CONFLICT (user_id, user_type)
+           DO UPDATE SET
+             system_name = EXCLUDED.system_name,
+             organization = EXCLUDED.organization,
+             timezone = EXCLUDED.timezone,
+             date_format = EXCLUDED.date_format,
+             updated_at = NOW()
+           RETURNING *`,
+          [String(user_id), user_type, system_name, organization, timezone, date_format]
+        );
+
+        res.json(result.rows[0]);
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error while saving settings' });
       }
     });
 

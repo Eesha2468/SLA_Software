@@ -43,6 +43,31 @@ const Header: React.FC<HeaderProps> = ({ collapsed, onToggle, onLogout }) => {
   const userString = sessionStorage.getItem('user');
   const user = userString ? JSON.parse(userString) : { first_name: 'Admin' };
 
+  const [orgName, setOrgName] = React.useState<string>(() => {
+    try {
+      const settings = sessionStorage.getItem('settings');
+      return settings ? JSON.parse(settings).organization : '';
+    } catch {
+      return '';
+    }
+  });
+
+  React.useEffect(() => {
+    const handleSettingsUpdate = () => {
+      try {
+        const settings = sessionStorage.getItem('settings');
+        if (settings) {
+          setOrgName(JSON.parse(settings).organization);
+        }
+      } catch (e) {
+        console.error('Failed to sync settings', e);
+      }
+    };
+
+    window.addEventListener('settings-updated', handleSettingsUpdate);
+    return () => window.removeEventListener('settings-updated', handleSettingsUpdate);
+  }, []);
+
   return (
     <AntHeader
       style={{
@@ -67,6 +92,11 @@ const Header: React.FC<HeaderProps> = ({ collapsed, onToggle, onLogout }) => {
 
       {/* RIGHT SIDE ACTIONS */}
       <Space size={16}>
+        {orgName && (
+          <span style={{ color: '#94a3b8', marginRight: 16, fontSize: '14px', fontWeight: 500 }}>
+            {orgName}
+          </span>
+        )}
 
         {/* 👤 User Dropdown */}
         <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" arrow>

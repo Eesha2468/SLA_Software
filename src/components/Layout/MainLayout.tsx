@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layout } from 'antd';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import { fetchSettings } from '../../api/settingsApi';
 
 const { Content } = Layout;
 
@@ -12,6 +13,19 @@ interface MainLayoutProps {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ onLogout }) => {
   const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    const prefetchSettings = async () => {
+      try {
+        const settings = await fetchSettings();
+        sessionStorage.setItem('settings', JSON.stringify(settings));
+        window.dispatchEvent(new Event('settings-updated'));
+      } catch (e) {
+        console.error('Failed to prefetch settings', e);
+      }
+    };
+    prefetchSettings();
+  }, []);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
