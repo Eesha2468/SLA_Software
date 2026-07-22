@@ -193,6 +193,7 @@ const NewTicket: React.FC = () => {
 
     try {
       await createTicket(dbPayload);
+      window.dispatchEvent(new Event('unread-count-updated'));
       message.success("Ticket created successfully!");
       form.resetFields();
       setFileList([]);

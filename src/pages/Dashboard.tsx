@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Row, Col, Select, message, Spin, Button, Space } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Row, Col, Select, message, Spin, Table, Tag, Typography, Card } from 'antd';
 import {
   ClockCircleOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExclamationCircleOutlined,
-  PlusCircleOutlined,
+  InboxOutlined,
+  SendOutlined,
+  FileTextOutlined,
+  AlertOutlined,
 } from '@ant-design/icons';
 import {
   StatCard,
@@ -13,129 +16,101 @@ import {
   DonutChartComponent,
   BarChartComponent,
 } from '../components/Dashboard';
-import { fetchTickets, TicketDTO } from '../api/ticketApi';
+import {
+  fetchDashboardStats,
+  fetchDashboardCharts,
+  fetchDashboardRecentTickets,
+  DashboardStatsDTO,
+  DashboardChartsDTO,
+  RecentTicketDTO,
+} from '../api/ticketApi';
 import { fetchLines, LineDTO } from '../api/linesApi';
-import { fetchFaultLevelCategories, FaultLevelCategoryDTO } from '../api/faultLevelApi';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 
+const { Text, Title } = Typography;
+
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [tickets, setTickets] = useState<TicketDTO[]>([]);
   const [lines, setLines] = useState<LineDTO[]>([]);
-  const [faultLevels, setFaultLevels] = useState<FaultLevelCategoryDTO[]>([]);
-  const [selectedLine, setSelectedLine] = useState<string | number>('All');
+  const [selectedLine, setSelectedLine] = useState<string>('All');
   const [loading, setLoading] = useState(true);
 
-  const loadData = async () => {
-    setLoading(true);
+  const [stats, setStats] = useState<DashboardStatsDTO>({
+    total: 0,
+    total_sent: 0,
+    total_received: 0,
+    new_tickets: 0,
+    opened: 0,
+    open_tickets: 0,
+    in_progress: 0,
+    resolved: 0,
+    closed: 0,
+    cancelled: 0,
+    overdue: 0,
+    sla_breached: 0,
+  });
+
+  const [charts, setCharts] = useState<DashboardChartsDTO>({
+    monthlyTrend: [],
+    statusData: [],
+    weeklyData: [],
+    faultLevelBreakdown: [],
+  });
+
+  const [recentTickets, setRecentTickets] = useState<RecentTicketDTO[]>([]);
+
+  const userString = sessionStorage.getItem('user');
+  const loggedInUser = (() => {
     try {
-      const [ticketsData, linesData, flData] = await Promise.all([
-        fetchTickets(),
-        fetchLines(),
-        fetchFaultLevelCategories(),
-      ]);
-      setTickets(ticketsData);
-      setLines(linesData);
-      setFaultLevels(flData);
+      return userString ? JSON.parse(userString) : null;
+    } catch (e) {
+      return null;
+    }
+  })();
+
+  const isClient = loggedInUser?.user_type === 'CLIENT_USER';
+  const userOrgName = isClient ? 'CDA' : 'TAP';
+
+  const loadInitialData = async () => {
+    try {
+      const lineData = await fetchLines();
+      setLines(lineData);
     } catch (error: any) {
-      message.error(error.message || 'Failed to load dashboard data');
+      console.error('Failed to load lines:', error);
+    }
+  };
+
+  const loadDashboardData = async (isInitial = false) => {
+    if (isInitial) setLoading(true);
+    try {
+      const [statsData, chartsData, recentData] = await Promise.all([
+        fetchDashboardStats(selectedLine),
+        fetchDashboardCharts(selectedLine),
+        fetchDashboardRecentTickets(selectedLine),
+      ]);
+      setStats(statsData);
+      setCharts(chartsData);
+      setRecentTickets(recentData);
+    } catch (error: any) {
+      if (isInitial) {
+        message.error(error.message || 'Failed to load dashboard data');
+      }
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 10000);
-    return () => clearInterval(interval);
+    loadInitialData();
   }, []);
 
-  const filteredTickets = useMemo(() => {
-    if (selectedLine === 'All') return tickets;
-    return tickets.filter((t) => String(t.line_id) === String(selectedLine));
-  }, [tickets, selectedLine]);
-
-  const stats = useMemo(() => {
-    const total = filteredTickets.length;
-    const opened = filteredTickets.filter(t => ['open', 'in progress'].includes(t.ticket_status?.toLowerCase() || '')).length;
-    const resolved = filteredTickets.filter(t => t.ticket_status?.toLowerCase() === 'resolved').length;
-    const cancelled = filteredTickets.filter(t => ['cancel', 'cancelled'].includes(t.ticket_status?.toLowerCase() || '')).length;
-
-    return { total, opened, resolved, cancelled };
-  }, [filteredTickets]);
-
-  const monthlyTrend = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const data = months.map(m => ({ name: m, value: 0 }));
-
-    filteredTickets.forEach(t => {
-      if (t.created_at) {
-        const monthIndex = dayjs(t.created_at).month();
-        data[monthIndex].value++;
-      }
-    });
-
-    // Return only months that have passed in the current year or all if you prefer
-    return data;
-  }, [filteredTickets]);
-
-  const statusData = useMemo(() => {
-    const counts = {
-      'Open': 0,
-      'Resolved': 0,
-      'In-progress': 0,
-      'Cancelled': 0
-    };
-
-    filteredTickets.forEach(t => {
-      const status = t.ticket_status?.toLowerCase() || '';
-      if (status === 'open') {
-        counts['Open']++;
-      } else if (status === 'resolved' || status === 'close') {
-        counts['Resolved']++;
-      } else if (status === 'in progress' || status === 'in-progress') {
-        counts['In-progress']++;
-      } else if (status === 'cancel' || status === 'cancelled') {
-        counts['Cancelled']++;
-      }
-    });
-
-    return [
-      { name: 'Open', value: counts['Open'] },
-      { name: 'Resolved', value: counts['Resolved'] },
-      { name: 'In-progress', value: counts['In-progress'] },
-      { name: 'Cancelled', value: counts['Cancelled'] }
-    ];
-  }, [filteredTickets]);
-
-  const weeklyData = useMemo(() => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const data = days.map(d => ({ name: d, value: 0 }));
-
-    // For simplicity, grouping by day of week for all tickets
-    // In a real app, you might want "Last 7 Days"
-    filteredTickets.forEach(t => {
-      if (t.created_at) {
-        const dayIndex = dayjs(t.created_at).day();
-        data[dayIndex].value++;
-      }
-    });
-
-    // Reorder so today is at the end? For now just Sun-Sat
-    return data;
-  }, [filteredTickets]);
-
-  const faultLevelBreakdown = useMemo(() => {
-    const counts: Record<string, number> = {};
-    filteredTickets.forEach(t => {
-      const fl = faultLevels.find(f => f.fl_category_id === t.fl_category_id);
-      const name = fl?.fl_name || 'Other';
-      counts[name] = (counts[name] || 0) + 1;
-    });
-
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [filteredTickets, faultLevels]);
+  useEffect(() => {
+    loadDashboardData(true);
+    // Poll dashboard stats every 5 seconds for real-time ticket updates
+    const interval = setInterval(() => loadDashboardData(false), 5000);
+    return () => clearInterval(interval);
+  }, [selectedLine]);
 
   if (loading) {
     return (
@@ -147,19 +122,72 @@ const Dashboard: React.FC = () => {
 
   const lineOptions = [
     { value: 'All', label: 'All Lines' },
-    ...lines.map(l => ({ value: String(l.line_id), label: l.line_name }))
+    ...lines.map((l) => ({ value: String(l.line_id), label: l.line_name })),
+  ];
+
+  const recentColumns = [
+    {
+      title: 'Ticket #',
+      dataIndex: 'ticket_number',
+      key: 'ticket_number',
+      render: (text: string, record: RecentTicketDTO) => (
+        <Text strong style={{ color: '#1890ff' }}>
+          {text}
+        </Text>
+      ),
+    },
+    {
+      title: 'Title',
+      dataIndex: 'ticket_title',
+      key: 'ticket_title',
+    },
+    {
+      title: 'Line',
+      dataIndex: 'line_name',
+      key: 'line_name',
+    },
+    {
+      title: 'Creator',
+      dataIndex: 'creator_name',
+      key: 'creator_name',
+    },
+    {
+      title: 'Status',
+      dataIndex: 'ticket_status',
+      key: 'ticket_status',
+      render: (status: string) => {
+        let color = 'blue';
+        if (status === 'Resolved' || status === 'Close') color = 'success';
+        else if (status === 'Cancel') color = 'error';
+        else if (status === 'In Progress') color = 'warning';
+        return <Tag color={color}>{status?.toUpperCase()}</Tag>;
+      },
+    },
+    {
+      title: 'Created At',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (date: string) => dayjs(date).format('MMM DD, YYYY HH:mm'),
+    },
   ];
 
   return (
-    <div>
+    <div style={{ paddingBottom: 32 }}>
       {/* Header & Filter Row */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
         <Col>
-          <h2 style={{ margin: 0, fontWeight: 700, color: '#1e293b' }}>Dashboard Overview</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <h2 style={{ margin: 0, fontWeight: 700, color: '#1e293b' }}>
+              {userOrgName} Dashboard Overview
+            </h2>
+            <Tag color={isClient ? 'purple' : 'blue'} style={{ fontSize: 13, padding: '2px 10px' }}>
+              {userOrgName} Portal
+            </Tag>
+          </div>
         </Col>
         <Col>
           <Select
-            value={String(selectedLine)}
+            value={selectedLine}
             onChange={(value) => setSelectedLine(value)}
             size="large"
             style={{ width: 220 }}
@@ -169,8 +197,8 @@ const Dashboard: React.FC = () => {
         </Col>
       </Row>
 
-      {/* Stat Cards */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      {/* Primary Stat Cards */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={24} sm={12} lg={6}>
           <StatCard
             title="Total Tickets"
@@ -183,7 +211,17 @@ const Dashboard: React.FC = () => {
 
         <Col xs={24} sm={12} lg={6}>
           <StatCard
-            title="Opened"
+            title="New Tickets (Unread)"
+            value={stats.new_tickets}
+            icon={<InboxOutlined />}
+            color="#ec4899"
+            subtitle="Pending Receiver Attention"
+          />
+        </Col>
+
+        <Col xs={24} sm={12} lg={6}>
+          <StatCard
+            title="Open / Active"
             value={stats.opened}
             icon={<CheckCircleOutlined />}
             color="#0ea5e9"
@@ -193,11 +231,44 @@ const Dashboard: React.FC = () => {
 
         <Col xs={24} sm={12} lg={6}>
           <StatCard
-            title="Resolved"
-            value={stats.resolved}
+            title="Resolved / Closed"
+            value={stats.resolved + stats.closed}
             icon={<CloseCircleOutlined />}
             color="#059669"
-            subtitle="Successfully Fixed"
+            subtitle="Successfully Completed"
+          />
+        </Col>
+      </Row>
+
+      {/* Secondary Stat Cards (Sent/Received/Overdue/Cancelled) */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} lg={6}>
+          <StatCard
+            title={isClient ? "Sent to TAP" : "Sent to CDA"}
+            value={stats.total_sent}
+            icon={<SendOutlined />}
+            color="#6366f1"
+            subtitle="Outgoing Tickets"
+          />
+        </Col>
+
+        <Col xs={24} sm={12} lg={6}>
+          <StatCard
+            title={isClient ? "Received from TAP" : "Received from CDA"}
+            value={stats.total_received}
+            icon={<InboxOutlined />}
+            color="#8b5cf6"
+            subtitle="Incoming Tickets"
+          />
+        </Col>
+
+        <Col xs={24} sm={12} lg={6}>
+          <StatCard
+            title="Overdue Tickets"
+            value={stats.overdue}
+            icon={<AlertOutlined />}
+            color="#f59e0b"
+            subtitle="Exceeded Standard Resolution"
           />
         </Col>
 
@@ -207,7 +278,7 @@ const Dashboard: React.FC = () => {
             value={stats.cancelled}
             icon={<ExclamationCircleOutlined />}
             color="#dc2626"
-            subtitle="Closed without resolution"
+            subtitle="Closed without Resolution"
           />
         </Col>
       </Row>
@@ -216,37 +287,61 @@ const Dashboard: React.FC = () => {
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} lg={16}>
           <AreaChartComponent
-            data={monthlyTrend}
+            data={charts.monthlyTrend}
             title="Monthly Ticket Trend"
           />
         </Col>
 
         <Col xs={24} lg={8}>
           <DonutChartComponent
-            data={statusData}
+            data={charts.statusData}
             title="Ticket Status Overview"
-            colors={['#1e40af', '#059669', '#f59e0b', '#dc2626']}
+            colors={['#1e40af', '#0ea5e9', '#059669', '#dc2626']}
           />
         </Col>
       </Row>
 
       {/* Charts Row 2 */}
-      <Row gutter={[16, 16]}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} lg={12}>
           <BarChartComponent
-            data={weeklyData}
+            data={charts.weeklyData}
             title="Weekly Ticket Volume"
           />
         </Col>
 
         <Col xs={24} lg={12}>
           <DonutChartComponent
-            data={faultLevelBreakdown}
+            data={charts.faultLevelBreakdown}
             title="Fault Level Breakdown"
             colors={['#0ea5e9', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']}
           />
         </Col>
       </Row>
+
+      {/* Recent Tickets Table */}
+      <Card
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FileTextOutlined style={{ color: '#2563eb' }} />
+            <span style={{ fontWeight: 600 }}>Recent Tickets ({userOrgName})</span>
+          </div>
+        }
+        style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
+      >
+        <Table
+          dataSource={recentTickets}
+          columns={recentColumns}
+          rowKey="ticket_id"
+          pagination={false}
+          locale={{ emptyText: 'No tickets found for this organization.' }}
+          onRow={(record) => ({
+            onClick: () => navigate(`/tickets/${record.ticket_id}`),
+            style: { cursor: 'pointer' },
+          })}
+          size="middle"
+        />
+      </Card>
     </div>
   );
 };

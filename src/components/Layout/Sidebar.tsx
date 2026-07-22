@@ -66,9 +66,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
 
   useEffect(() => {
     getTicketCount();
-    // Refresh count every 15 seconds for real-time feel
-    const interval = setInterval(getTicketCount, 15000);
-    return () => clearInterval(interval);
+    window.addEventListener('unread-count-updated', getTicketCount);
+    // Refresh count every 5 seconds for real-time feel
+    const interval = setInterval(getTicketCount, 5000);
+    return () => {
+      window.removeEventListener('unread-count-updated', getTicketCount);
+      clearInterval(interval);
+    };
   }, [location.pathname]);
 
   const handleMenuClick = (e: { key: string }) => {

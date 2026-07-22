@@ -40,18 +40,7 @@ const TicketList: React.FC<TicketListProps> = (props) => {
     }
   })();
 
-  useEffect(() => {
-    const clearNotifications = async () => {
-      if (loggedInUser) {
-        try {
-          await markAllTicketsAsRead(loggedInUser.id, loggedInUser.user_type);
-        } catch (error) {
-          console.error("Failed to clear notifications:", error);
-        }
-      }
-    };
-    clearNotifications();
-  }, [loggedInUser?.id]);
+
 
   const filteredTickets = (tickets || []).filter((t) => {
     const search = searchText.toLowerCase();

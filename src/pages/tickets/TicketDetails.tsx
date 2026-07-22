@@ -33,6 +33,7 @@ const TicketDetails: React.FC = () => {
         // Mark as read if I am the receiver
         if (loggedInUser && String(data.reported_to) === String(loggedInUser.id)) {
           await markTicketAsRead(Number(id), loggedInUser.id, loggedInUser.user_type);
+          window.dispatchEvent(new Event('unread-count-updated'));
         }
       }
     } catch (error) {

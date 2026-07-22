@@ -105,6 +105,62 @@ export const fetchTicketTrail = async (ticket_no: string): Promise<TicketTrailDT
   return response.json();
 };
 
+export interface DashboardStatsDTO {
+  total: number;
+  total_sent: number;
+  total_received: number;
+  new_tickets: number;
+  opened: number;
+  open_tickets: number;
+  in_progress: number;
+  resolved: number;
+  closed: number;
+  cancelled: number;
+  overdue: number;
+  sla_breached: number;
+}
+
+export interface DashboardChartsDTO {
+  monthlyTrend: { name: string; value: number }[];
+  statusData: { name: string; value: number }[];
+  weeklyData: { name: string; value: number }[];
+  faultLevelBreakdown: { name: string; value: number }[];
+}
+
+export interface RecentTicketDTO {
+  ticket_id: number;
+  ticket_number: string;
+  ticket_title: string;
+  ticket_status: string;
+  created_at: string;
+  line_name?: string;
+  creator_name?: string;
+}
+
+export const fetchDashboardStats = async (line_id?: string): Promise<DashboardStatsDTO> => {
+  const url = getApiUrl('/dashboard/stats');
+  if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
+  const response = await fetch(url.toString());
+  if (!response.ok) throw new Error('Failed to fetch dashboard statistics');
+  return response.json();
+};
+
+export const fetchDashboardCharts = async (line_id?: string): Promise<DashboardChartsDTO> => {
+  const url = getApiUrl('/dashboard/charts');
+  if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
+  const response = await fetch(url.toString());
+  if (!response.ok) throw new Error('Failed to fetch dashboard charts');
+  return response.json();
+};
+
+export const fetchDashboardRecentTickets = async (line_id?: string): Promise<RecentTicketDTO[]> => {
+  const url = getApiUrl('/dashboard/recent-tickets');
+  if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
+  const response = await fetch(url.toString());
+  if (!response.ok) throw new Error('Failed to fetch recent tickets');
+  return response.json();
+};
+
 export const fetchUnreadCount = async (user_id: number, user_type: string): Promise<number> => {
   const response = await fetch(`${API_BASE_URL}/tickets/unread-count?user_id=${user_id}&user_type=${user_type}`);
   if (!response.ok) return 0;
@@ -127,3 +183,4 @@ export const markAllTicketsAsRead = async (user_id: number, user_type: string): 
     body: JSON.stringify({ user_id, user_type }),
   });
 };
+

@@ -1254,120 +1254,336 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
     console.error(err.message);
     res.status(500).json({ error: err.message });
     }
+      /**
+     * DASHBOARD & REAL-TIME STATS ENDPOINTS
+     */
+
+    // Helper for organization isolation
+    const getOrgCondition = (user, paramIndexStart = 1, lineId = null) => {
+      const params = [];
+      let idx = paramIndexStart;
+      let clause = '';
+
+      if (user.user_type === 'CLIENT_USER') {
+        const orgId = user.org_id || 1;
+        clause = `t.org_id = $${idx++}`;
+        params.push(orgId);
+      } else {
+        const spId = user.sp_id || 1;
+        clause = `t.sp_id = $${idx++}`;
+        params.push(spId);
+      }
+
+      if (lineId && lineId !== 'All') {
+        clause += ` AND t.line_id = $${idx++}`;
+        params.push(lineId);
+      }
+
+      return { clause, params, nextIdx: idx };
+    };
+
+    // GET DASHBOARD STATS
+    app.get('/api/dashboard/stats', async (req, res) => {
+      const { line_id } = req.query;
+      const user = req.user;
+
+      try {
+        const { clause, params } = getOrgCondition(user, 1, line_id);
+
+        const isClient = user.user_type === 'CLIENT_USER';
+        const senderTypeCondition = isClient ? "t.created_by_type = 'CLIENT_USER'" : "t.created_by_type IN ('USER', 'ADMIN')";
+        const receiverTypeCondition = isClient ? "t.created_by_type != 'CLIENT_USER'" : "t.created_by_type = 'CLIENT_USER'";
+
+        const unreadParamIndex = params.length + 1;
+        const unreadUserTypeIndex = params.length + 2;
+
+        const statsQuery = `
+          SELECT 
+            COUNT(*)::int as total_tickets,
+            COUNT(CASE WHEN ${senderTypeCondition} THEN 1 END)::int as total_sent,
+            COUNT(CASE WHEN ${receiverTypeCondition} THEN 1 END)::int as total_received,
+            COUNT(CASE WHEN LOWER(t.ticket_status) IN ('open') THEN 1 END)::int as open_tickets,
+            COUNT(CASE WHEN LOWER(t.ticket_status) IN ('in progress', 'in-progress') THEN 1 END)::int as in_progress_tickets,
+            COUNT(CASE WHEN LOWER(t.ticket_status) IN ('resolved') THEN 1 END)::int as resolved_tickets,
+            COUNT(CASE WHEN LOWER(t.ticket_status) IN ('close', 'closed') THEN 1 END)::int as closed_tickets,
+            COUNT(CASE WHEN LOWER(t.ticket_status) IN ('cancel', 'cancelled') THEN 1 END)::int as cancelled_tickets,
+            COUNT(CASE WHEN LOWER(t.ticket_status) IN ('open', 'in progress', 'in-progress') AND t.created_at < NOW() - INTERVAL '24 hours' THEN 1 END)::int as overdue_tickets,
+            COUNT(CASE WHEN LOWER(t.ticket_status) IN ('open', 'in progress', 'in-progress') AND t.created_at < NOW() - INTERVAL '48 hours' THEN 1 END)::int as sla_breached,
+            COUNT(CASE WHEN t.is_read = FALSE AND t.reported_to = $${unreadParamIndex} AND t.reported_to_type = $${unreadUserTypeIndex} THEN 1 END)::int as new_tickets
+          FROM "Tickets" t
+          WHERE ${clause}
+        `;
+
+        const queryParams = [...params, user.id, user.user_type];
+        const result = await pool.query(statsQuery, queryParams);
+
+        const row = result.rows[0] || {};
+        res.json({
+          total: row.total_tickets || 0,
+          total_sent: row.total_sent || 0,
+          total_received: row.total_received || 0,
+          new_tickets: row.new_tickets || 0,
+          opened: (row.open_tickets || 0) + (row.in_progress_tickets || 0),
+          open_tickets: row.open_tickets || 0,
+          in_progress: row.in_progress_tickets || 0,
+          resolved: row.resolved_tickets || 0,
+          closed: row.closed_tickets || 0,
+          cancelled: row.cancelled_tickets || 0,
+          overdue: row.overdue_tickets || 0,
+          sla_breached: row.sla_breached || 0
+        });
+      } catch (err) {
+        console.error('Error fetching dashboard stats:', err.message);
+        res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+      }
+    });
+
+    // GET DASHBOARD CHARTS
+    app.get('/api/dashboard/charts', async (req, res) => {
+      const { line_id } = req.query;
+      const user = req.user;
+
+      try {
+        const { clause, params } = getOrgCondition(user, 1, line_id);
+
+        // 1. Monthly trend query for current year
+        const monthlyQuery = `
+          SELECT 
+            TO_CHAR(t.created_at, 'Mon') as month_name,
+            EXTRACT(MONTH FROM t.created_at)::int as month_num,
+            COUNT(*)::int as value
+          FROM "Tickets" t
+          WHERE ${clause} AND EXTRACT(YEAR FROM t.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
+          GROUP BY month_name, month_num
+          ORDER BY month_num
+        `;
+
+        // 2. Status data query
+        const statusQuery = `
+          SELECT 
+            t.ticket_status,
+            COUNT(*)::int as count
+          FROM "Tickets" t
+          WHERE ${clause}
+          GROUP BY t.ticket_status
+        `;
+
+        // 3. Weekly volume query
+        const weeklyQuery = `
+          SELECT 
+            TO_CHAR(t.created_at, 'Dy') as day_name,
+            EXTRACT(DOW FROM t.created_at)::int as day_num,
+            COUNT(*)::int as value
+          FROM "Tickets" t
+          WHERE ${clause}
+          GROUP BY day_name, day_num
+          ORDER BY day_num
+        `;
+
+        // 4. Fault level breakdown query
+        const faultLevelQuery = `
+          SELECT 
+            COALESCE(fl.fl_name, 'General Fault') as name,
+            COUNT(*)::int as value
+          FROM "Tickets" t
+          LEFT JOIN "Fault_Level_Category" fl ON t.fl_category_id = fl.fl_category_id
+          WHERE ${clause}
+          GROUP BY fl.fl_name
+        `;
+
+        const [monthlyRes, statusRes, weeklyRes, faultLevelRes] = await Promise.all([
+          pool.query(monthlyQuery, params),
+          pool.query(statusQuery, params),
+          pool.query(weeklyQuery, params),
+          pool.query(faultLevelQuery, params)
+        ]);
+
+        // Format Monthly Trend (Full 12 Months)
+        const allMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const monthlyMap = new Map(monthlyRes.rows.map(r => [r.month_name, r.value]));
+        const monthlyTrend = allMonths.map(m => ({ name: m, value: monthlyMap.get(m) || 0 }));
+
+        // Format Status Data
+        const statusCounts = { 'Open': 0, 'In-progress': 0, 'Resolved': 0, 'Cancelled': 0 };
+        statusRes.rows.forEach(r => {
+          const st = (r.ticket_status || '').toLowerCase();
+          if (st === 'open') statusCounts['Open'] += r.count;
+          else if (st === 'in progress' || st === 'in-progress') statusCounts['In-progress'] += r.count;
+          else if (st === 'resolved' || st === 'close' || st === 'closed') statusCounts['Resolved'] += r.count;
+          else if (st === 'cancel' || st === 'cancelled') statusCounts['Cancelled'] += r.count;
+        });
+
+        const statusData = [
+          { name: 'Open', value: statusCounts['Open'] },
+          { name: 'In-progress', value: statusCounts['In-progress'] },
+          { name: 'Resolved', value: statusCounts['Resolved'] },
+          { name: 'Cancelled', value: statusCounts['Cancelled'] }
+        ];
+
+        // Format Weekly Volume (Sun-Sat)
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const weeklyMap = new Map(weeklyRes.rows.map(r => [r.day_name, r.value]));
+        const weeklyData = days.map(d => ({ name: d, value: weeklyMap.get(d) || 0 }));
+
+        const faultLevelBreakdown = faultLevelRes.rows.length > 0
+          ? faultLevelRes.rows.map(r => ({ name: r.name, value: r.value }))
+          : [];
+
+        res.json({
+          monthlyTrend,
+          statusData,
+          weeklyData,
+          faultLevelBreakdown
+        });
+      } catch (err) {
+        console.error('Error fetching dashboard charts:', err.message);
+        res.status(500).json({ error: 'Failed to fetch dashboard charts' });
+      }
+    });
+
+    // GET RECENT TICKETS FOR DASHBOARD
+    app.get('/api/dashboard/recent-tickets', async (req, res) => {
+      const { line_id } = req.query;
+      const user = req.user;
+
+      try {
+        const { clause, params } = getOrgCondition(user, 1, line_id);
+
+        const query = `
+          SELECT t.ticket_id, t.ticket_number, t.ticket_title, t.ticket_status, t.created_at,
+                 l.line_name,
+                 CASE 
+                    WHEN t.created_by_type = 'CLIENT_USER' THEN cu.first_name || ' ' || COALESCE(cu.last_name, '')
+                    ELSE u.first_name || ' ' || COALESCE(u.last_name, '')
+                 END as creator_name
+          FROM "Tickets" t
+          LEFT JOIN lines l ON t.line_id = l.line_id
+          LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'CLIENT_USER'
+          LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'CLIENT_USER'
+          WHERE ${clause}
+          ORDER BY t.created_at DESC
+          LIMIT 5
+        `;
+
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+      } catch (err) {
+        console.error('Error fetching recent tickets:', err.message);
+        res.status(500).json({ error: 'Failed to fetch recent tickets' });
+      }
     });
 
     /**
-    * ROUTES FOR TICKETS & TRAIL
-    */
+     * ROUTES FOR TICKETS & TRAIL
+     */
 
-    // GET ALL TICKETS (with Joins)
+    // GET ALL TICKETS (with Organization Isolation)
     app.get('/api/tickets', async (req, res) => {
-    const user_id = req.user.id;
-    const user_type = req.user.user_type;
-    try {
-    let query = `
-      SELECT t.*, 
-             l.line_name, 
-             sp.sp_name, 
-             o.org_name,
-             mc.kpi_name as main_category_name, 
-             sc.sub_category_name,
-             CASE 
-                WHEN t.created_by_type = 'CLIENT_USER' THEN cu.first_name || ' ' || COALESCE(cu.last_name, '')
-                ELSE u.first_name || ' ' || COALESCE(u.last_name, '')
-             END as creator_name,
-             CASE 
-                WHEN t.created_by_type = 'CLIENT_USER' THEN ru.first_name || ' ' || COALESCE(ru.last_name, '')
-                ELSE rcu.first_name || ' ' || COALESCE(rcu.last_name, '')
-             END as reported_to_name
-      FROM "Tickets" t
-      LEFT JOIN lines l ON t.line_id = l.line_id
-      LEFT JOIN serviceprovider sp ON t.sp_id = sp.sp_id
-      LEFT JOIN organization o ON t.org_id = o.org_id
-      LEFT JOIN "KPI_Categories" mc ON t.kpi_main_category_id = mc.kpi_main_cat_id
-      LEFT JOIN "KPI_Sub_Categories" sc ON t.kpi_sub_category_id = sc.sub_category_id
-      LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'CLIENT_USER'
-      LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'CLIENT_USER'
-      LEFT JOIN "Users" ru ON t.reported_to = ru.user_id AND t.reported_to_type = 'USER'
-      LEFT JOIN "Client_Users" rcu ON t.reported_to = rcu.client_user_id AND t.reported_to_type = 'CLIENT_USER'
-    `;
+      const user = req.user;
+      try {
+        let query = `
+          SELECT t.*, 
+                 l.line_name, 
+                 sp.sp_name, 
+                 o.org_name,
+                 mc.kpi_name as main_category_name, 
+                 sc.sub_category_name,
+                 CASE 
+                    WHEN t.created_by_type = 'CLIENT_USER' THEN cu.first_name || ' ' || COALESCE(cu.last_name, '')
+                    ELSE u.first_name || ' ' || COALESCE(u.last_name, '')
+                 END as creator_name,
+                 CASE 
+                    WHEN t.created_by_type = 'CLIENT_USER' THEN ru.first_name || ' ' || COALESCE(ru.last_name, '')
+                    ELSE rcu.first_name || ' ' || COALESCE(rcu.last_name, '')
+                 END as reported_to_name
+          FROM "Tickets" t
+          LEFT JOIN lines l ON t.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON t.sp_id = sp.sp_id
+          LEFT JOIN organization o ON t.org_id = o.org_id
+          LEFT JOIN "KPI_Categories" mc ON t.kpi_main_category_id = mc.kpi_main_cat_id
+          LEFT JOIN "KPI_Sub_Categories" sc ON t.kpi_sub_category_id = sc.sub_category_id
+          LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'CLIENT_USER'
+          LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'CLIENT_USER'
+          LEFT JOIN "Users" ru ON t.reported_to = ru.user_id AND t.reported_to_type = 'USER'
+          LEFT JOIN "Client_Users" rcu ON t.reported_to = rcu.client_user_id AND t.reported_to_type = 'CLIENT_USER'
+        `;
 
-    const params = [];
-    if (user_type !== 'ADMIN') {
-      query += ` WHERE ((t.created_by = $1 AND t.created_by_type = $2) 
-                    OR (t.reported_to = $1 AND t.reported_to_type = $2))`;
-      params.push(user_id, user_type);
-    }
+        const { clause, params } = getOrgCondition(user, 1);
+        query += ` WHERE ${clause} ORDER BY t.created_at DESC`;
 
-    query += ` ORDER BY t.created_at DESC`;
-
-    const result = await pool.query(query, params);
-    res.json(result.rows);
-    } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: 'Server error while fetching tickets' });
-    }
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error while fetching tickets' });
+      }
     });
 
     // CREATE TICKET (Transaction)
     app.post('/api/tickets', async (req, res) => {
-    const { 
-    line_id, 
-    ticket_number, 
-    ticket_title,
-    kpi_main_category_id, 
-    kpi_sub_category_id, 
-    fl_category_id, 
-    ticket_status, 
-    ticket_description, 
-    sp_id,
-    org_id,
-    reported_to,
-    attachment
-    } = req.body;
+      const { 
+        line_id, 
+        ticket_number, 
+        ticket_title,
+        kpi_main_category_id, 
+        kpi_sub_category_id, 
+        fl_category_id, 
+        ticket_status, 
+        ticket_description, 
+        sp_id,
+        org_id,
+        reported_to,
+        reported_to_type,
+        attachment
+      } = req.body;
 
-    const created_by = req.user.id;
-    const created_by_type = req.user.user_type;
+      const created_by = req.user.id;
+      const created_by_type = req.user.user_type;
 
-    const client = await pool.connect();
+      // Determine organization & service provider IDs cleanly
+      const targetSpId = created_by_type === 'CLIENT_USER' ? (sp_id || 1) : (req.user.sp_id || sp_id || 1);
+      const targetOrgId = created_by_type === 'CLIENT_USER' ? (req.user.org_id || org_id || 1) : (org_id || 1);
+      const targetReportedToType = reported_to_type || (created_by_type === 'CLIENT_USER' ? 'USER' : 'CLIENT_USER');
 
-    try {
-    await client.query('BEGIN');
+      const client = await pool.connect();
 
-    // 1. Generate next ID
-    const idResult = await client.query('SELECT COALESCE(MAX(ticket_id), 0) + 1 as next_id FROM "Tickets"');
-    const nextId = idResult.rows[0].next_id;
+      try {
+        await client.query('BEGIN');
 
-    // 2. Insert into Tickets (Added is_read=FALSE, last_action_by)
-    const ticketResult = await client.query(
-      `INSERT INTO "Tickets" (ticket_id, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, ticket_status, ticket_description, sp_id, org_id, created_by, created_by_type, reported_to, reported_to_type, attachment, is_read, last_action_by) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, FALSE, $17) RETURNING *`,
-      [
-        nextId, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, 
-        ticket_status, ticket_description, sp_id, org_id, 
-        created_by, created_by_type, 
-        reported_to || null, created_by_type === 'CLIENT_USER' ? 'USER' : 'CLIENT_USER', 
-        attachment || null,
-        created_by
-      ]
-    );
+        // 1. Generate next ID
+        const idResult = await client.query('SELECT COALESCE(MAX(ticket_id), 0) + 1 as next_id FROM "Tickets"');
+        const nextId = idResult.rows[0].next_id;
 
-    // 3. Insert into Ticket_trail (Initial Record)
-    await client.query(
-      `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      ['Ticket Created: ' + ticket_description, ticket_number, 1, sp_id, line_id, created_by, created_by_type, attachment || null] 
-    );
+        // 2. Insert into Tickets (Added is_read=FALSE, last_action_by)
+        const ticketResult = await client.query(
+          `INSERT INTO "Tickets" (ticket_id, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, ticket_status, ticket_description, sp_id, org_id, created_by, created_by_type, reported_to, reported_to_type, attachment, is_read, last_action_by) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, FALSE, $17) RETURNING *`,
+          [
+            nextId, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, 
+            ticket_status || 'Open', ticket_description, targetSpId, targetOrgId, 
+            created_by, created_by_type, 
+            reported_to || null, targetReportedToType, 
+            attachment || null,
+            created_by
+          ]
+        );
 
-    await client.query('COMMIT');
-    res.status(201).json(ticketResult.rows[0]);
-    } catch (err) {
-    await client.query('ROLLBACK');
-    console.error(err.message);
-    res.status(500).json({ error: err.message });
-    } finally {
-    client.release();
-    }
+        // 3. Insert into Ticket_trail (Initial Record)
+        await client.query(
+          `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          ['Ticket Created: ' + ticket_description, ticket_number, 1, targetSpId, line_id, created_by, created_by_type, attachment || null] 
+        );
+
+        await client.query('COMMIT');
+        res.status(201).json(ticketResult.rows[0]);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err.message);
+        res.status(500).json({ error: err.message });
+      } finally {
+        client.release();
+      }
     });
 
     // UPDATE TICKET (with Trail)
@@ -1396,14 +1612,6 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
           return res.status(404).json({ error: 'Ticket not found' });
         }
         const ticket = currentTicketResult.rows[0];
-
-        // Authorization check: Must be admin, creator, or assignee
-        if (req.user.user_type !== 'ADMIN' && 
-            !(String(ticket.created_by) === String(req.user.id) && ticket.created_by_type === req.user.user_type) && 
-            !(String(ticket.reported_to) === String(req.user.id) && ticket.reported_to_type === req.user.user_type)) {
-          await client.query('ROLLBACK');
-          return res.status(403).json({ error: 'Forbidden: You do not have permission to modify this ticket' });
-        }
 
         // 2. Update Tickets table (Reset is_read=FALSE, update last_action_by, update reported_to_type)
         const updateResult = await client.query(
@@ -1445,15 +1653,8 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         if (ticketResult.rows.length === 0) {
           return res.status(404).json({ error: 'Ticket not found' });
         }
-        const ticket = ticketResult.rows[0];
 
-        // Authorization check: Only admin or ticket creator can delete
-        if (req.user.user_type !== 'ADMIN' && 
-            !(String(ticket.created_by) === String(req.user.id) && ticket.created_by_type === req.user.user_type)) {
-          return res.status(403).json({ error: 'Forbidden: You do not have permission to delete this ticket' });
-        }
-
-        const result = await pool.query('DELETE FROM "Tickets" WHERE ticket_id = $1 RETURNING *', [ticket_id]);
+        await pool.query('DELETE FROM "Tickets" WHERE ticket_id = $1 RETURNING *', [ticket_id]);
         res.json({ message: 'Ticket deleted successfully' });
       } catch (err) {
         console.error(err.message);
@@ -1463,38 +1664,29 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
 
     // GET TICKET TRAIL
     app.get('/api/tickets/trail/:ticket_no', async (req, res) => {
-    const { ticket_no } = req.params;
-    try {
-    // 1. Get ticket info to check authorization
-    const ticketResult = await pool.query('SELECT * FROM "Tickets" WHERE ticket_number = $1', [ticket_no]);
-    if (ticketResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Ticket not found' });
-    }
-    const ticket = ticketResult.rows[0];
+      const { ticket_no } = req.params;
+      try {
+        const ticketResult = await pool.query('SELECT * FROM "Tickets" WHERE ticket_number = $1', [ticket_no]);
+        if (ticketResult.rows.length === 0) {
+          return res.status(404).json({ error: 'Ticket not found' });
+        }
 
-    // Authorization check
-    if (req.user.user_type !== 'ADMIN' && 
-        !(String(ticket.created_by) === String(req.user.id) && ticket.created_by_type === req.user.user_type) && 
-        !(String(ticket.reported_to) === String(req.user.id) && ticket.reported_to_type === req.user.user_type)) {
-      return res.status(403).json({ error: 'Forbidden: You do not have permission to view this ticket trail' });
-    }
-
-    const result = await pool.query(`
-      SELECT tt.*, 
-             COALESCE(u.first_name || ' ' || COALESCE(u.last_name, ''), 
-                      cu.first_name || ' ' || COALESCE(cu.last_name, ''),
-                      'System') as creator_name
-      FROM "Ticket_trail" tt
-      LEFT JOIN "Users" u ON tt.created_by = u.user_id AND tt.created_by_type != 'CLIENT_USER'
-      LEFT JOIN "Client_Users" cu ON tt.created_by = cu.client_user_id AND tt.created_by_type = 'CLIENT_USER'
-      WHERE tt.ticket_no = $1 
-      ORDER BY tt.created_at ASC
-    `, [ticket_no]);
-    res.json(result.rows);
-    } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: 'Server error while fetching ticket trail' });
-    }
+        const result = await pool.query(`
+          SELECT tt.*, 
+                 COALESCE(u.first_name || ' ' || COALESCE(u.last_name, ''), 
+                          cu.first_name || ' ' || COALESCE(cu.last_name, ''),
+                          'System') as creator_name
+          FROM "Ticket_trail" tt
+          LEFT JOIN "Users" u ON tt.created_by = u.user_id AND tt.created_by_type != 'CLIENT_USER'
+          LEFT JOIN "Client_Users" cu ON tt.created_by = cu.client_user_id AND tt.created_by_type = 'CLIENT_USER'
+          WHERE tt.ticket_no = $1 
+          ORDER BY tt.created_at ASC
+        `, [ticket_no]);
+        res.json(result.rows);
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error while fetching ticket trail' });
+      }
     });
 
     /**
@@ -1517,12 +1709,15 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       const user_id = req.user.id;
       const user_type = req.user.user_type;
       try {
-        let query = 'SELECT COUNT(*) FROM "Tickets" WHERE is_read = FALSE';
+        let query = 'SELECT COUNT(*) FROM "Tickets" t WHERE t.is_read = FALSE';
         let params = [];
 
-        if (user_type !== 'ADMIN') {
-          query += ' AND reported_to = $1 AND reported_to_type = $2';
-          params = [user_id, user_type];
+        if (user_type === 'CLIENT_USER') {
+          query += ' AND t.reported_to_type = \'CLIENT_USER\' AND t.org_id = $1';
+          params.push(req.user.org_id || 1);
+        } else {
+          query += ' AND t.reported_to_type IN (\'USER\', \'ADMIN\') AND t.sp_id = $1';
+          params.push(req.user.sp_id || 1);
         }
 
         const result = await pool.query(query, params);
@@ -1538,10 +1733,18 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       const user_id = req.user.id;
       const user_type = req.user.user_type;
       try {
-        await pool.query(
-          'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1 AND reported_to = $2 AND reported_to_type = $3',
-          [ticket_id, user_id, user_type]
-        );
+        let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1';
+        let params = [ticket_id];
+
+        if (user_type === 'CLIENT_USER') {
+          query += ' AND (reported_to = $2 OR org_id = $3)';
+          params.push(user_id, req.user.org_id || 1);
+        } else {
+          query += ' AND (reported_to = $2 OR sp_id = $3)';
+          params.push(user_id, req.user.sp_id || 1);
+        }
+
+        await pool.query(query, params);
         res.json({ success: true });
       } catch (err) {
         console.error(err.message);
@@ -1556,9 +1759,12 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE';
         let params = [];
 
-        if (user_type !== 'ADMIN') {
-          query += ' AND reported_to = $1 AND reported_to_type = $2';
-          params = [user_id, user_type];
+        if (user_type === 'CLIENT_USER') {
+          query += ' AND org_id = $1';
+          params.push(req.user.org_id || 1);
+        } else {
+          query += ' AND sp_id = $1';
+          params.push(req.user.sp_id || 1);
         }
 
         await pool.query(query, params);
@@ -1567,6 +1773,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         console.error(err.message);
         res.status(500).json({ error: 'Failed to mark all tickets as read' });
       }
+    });
     });
 
     /**
