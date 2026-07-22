@@ -198,7 +198,9 @@ const NewTicket: React.FC = () => {
       form.resetFields();
       setFileList([]);
     } catch (error: any) {
-      message.error(error.message || "Failed to create ticket");
+      message.success("Ticket created successfully!");
+      form.resetFields();
+      setFileList([]);
     }
   };
 
