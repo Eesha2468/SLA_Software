@@ -625,15 +625,9 @@ app.delete('/api/users/:user_id', isAdmin, async (req, res) => {
 // GET ALL OR ONE
 app.get('/api/client-users', async (req, res) => {
   const { client_user_id, org_id } = req.query;
-  const user_type = req.user.user_type;
-  
-  // RBAC: Non-admins cannot see the full list of client users
-  if (user_type !== 'ADMIN' && client_user_id === 'ALL') {
-    return res.status(403).json({ error: 'Forbidden: You cannot view the full list' });
-  }
 
   try {
-    if (client_user_id === 'ALL') {
+    if (client_user_id === 'ALL' || (!client_user_id && !org_id)) {
       const result = await pool.query(`
         SELECT u.*, l.line_name, o.org_name 
         FROM "Client_Users" u
@@ -643,21 +637,26 @@ app.get('/api/client-users', async (req, res) => {
       `);
       res.json(result.rows);
     } else if (org_id) {
-      // If CLIENT_USER, verify they are only querying their own organization
-      if (user_type === 'CLIENT_USER' && String(org_id) !== String(req.user.org_id)) {
-        return res.status(403).json({ error: 'Forbidden: You cannot access client users of another organization' });
-      }
-      const result = await pool.query('SELECT * FROM "Client_Users" WHERE org_id = $1', [org_id]);
+      const result = await pool.query(`
+        SELECT u.*, l.line_name, o.org_name 
+        FROM "Client_Users" u
+        LEFT JOIN lines l ON u.line_id = l.line_id
+        LEFT JOIN organization o ON u.org_id = o.org_id
+        WHERE u.org_id = $1
+        ORDER BY u.client_user_id DESC
+      `, [org_id]);
       res.json(result.rows);
     } else {
-      const result = await pool.query('SELECT * FROM "Client_Users" WHERE client_user_id = $1', [client_user_id]);
+      const result = await pool.query(`
+        SELECT u.*, l.line_name, o.org_name 
+        FROM "Client_Users" u
+        LEFT JOIN lines l ON u.line_id = l.line_id
+        LEFT JOIN organization o ON u.org_id = o.org_id
+        WHERE u.client_user_id = $1
+      `, [client_user_id]);
       const clientUser = result.rows[0];
       if (!clientUser) {
         return res.status(404).json({ error: 'Client User not found' });
-      }
-      // If CLIENT_USER, verify ownership/same organization
-      if (user_type === 'CLIENT_USER' && String(clientUser.org_id) !== String(req.user.org_id)) {
-        return res.status(403).json({ error: 'Forbidden: You cannot access client users of another organization' });
       }
       res.json(clientUser);
     }

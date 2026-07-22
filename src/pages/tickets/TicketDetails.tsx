@@ -20,7 +20,15 @@ const TicketDetails: React.FC = () => {
   const [form] = Form.useForm();
 
   const userString = sessionStorage.getItem('user');
-  const loggedInUser = userString ? JSON.parse(userString) : null;
+  const loggedInUser = (() => {
+    try {
+      if (!userString) return null;
+      const parsed = JSON.parse(userString);
+      return typeof parsed === 'object' && parsed ? parsed : null;
+    } catch {
+      return null;
+    }
+  })();
 
   const loadData = async () => {
     try {

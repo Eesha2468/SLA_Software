@@ -88,7 +88,6 @@ const parseJsonResponse = async (response: Response) => {
     const errorMsg =
       json?.error ||
       json?.message ||
-      (text.includes('<!DOCTYPE') ? 'Server endpoint unavailable' : text.slice(0, 150)) ||
       'Request failed';
     throw new Error(errorMsg);
   }

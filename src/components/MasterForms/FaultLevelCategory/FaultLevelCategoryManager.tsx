@@ -116,7 +116,6 @@ const FaultLevelCategoryManager: React.FC = () => {
     { title: 'KPI Category', dataIndex: 'main_category_name', key: 'main_category_name' },
     { title: 'Sub-Category', dataIndex: 'sub_category_name', key: 'sub_category_name' },
     { title: 'Fault Name', dataIndex: 'fl_name', key: 'fl_name' },
-    { title: 'Res. Time', dataIndex: 'resolution_time', key: 'resolution_time' },
   ];
 
   return (
@@ -181,7 +180,7 @@ const FaultLevelCategoryManager: React.FC = () => {
           </Row>
 
           <Row gutter={[16, 0]}>
-            <Col xs={24} md={6}>
+            <Col xs={24} md={8}>
               <Form.Item name="fl_name" label="Fault Name" rules={[{ required: true }]}>
                 <Select placeholder="Select fault" size="large" disabled={!selectedSP}>
                   <Select.Option value="Major">Major</Select.Option>
@@ -191,12 +190,7 @@ const FaultLevelCategoryManager: React.FC = () => {
                 </Select>
               </Form.Item>
             </Col>
-            <Col xs={24} md={6}>
-              <Form.Item name="resolution_time" label="Resolution Time">
-                <Input placeholder="e.g. 4 Hours" size="large" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
+            <Col xs={24} md={16}>
               <Form.Item name="fl_desc" label="Description">
                 <Input placeholder="Enter description" size="large" />
               </Form.Item>

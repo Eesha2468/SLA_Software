@@ -24,19 +24,22 @@ const ClientUsersManager: React.FC = () => {
   const [editing, setEditing] = useState<ClientUserDTO | null>(null);
 
   const userString = sessionStorage.getItem('user');
-  const loggedInUser = userString ? JSON.parse(userString) : null;
+  const loggedInUser = (() => {
+    try {
+      if (!userString) return null;
+      const parsed = JSON.parse(userString);
+      return typeof parsed === 'object' && parsed ? parsed : null;
+    } catch {
+      return null;
+    }
+  })();
   const isClientUser = loggedInUser?.user_type === 'CLIENT_USER';
 
   const loadData = async () => {
     setLoading(true);
     try {
-      // If CLIENT_USER, fetch organization's client users
-      const fetchUsersPromise = isClientUser 
-        ? fetchClientUsers(loggedInUser.org_id, loggedInUser.user_type) 
-        : fetchClientUsers(undefined, loggedInUser?.user_type);
-      
       const [usersData, linesData, orgData] = await Promise.all([
-        fetchUsersPromise,
+        fetchClientUsers(undefined, loggedInUser?.user_type),
         fetchLines(),
         fetchOrganizations()
       ]);
@@ -110,15 +113,10 @@ const ClientUsersManager: React.FC = () => {
 
   const lineOptions = lines
     .filter((l) => {
-      // Find if this line is already taken by ANY client user
       const isTaken = records.some((u) => u.line_id === l.line_id);
-      
-      // If we are editing, ALLOW the line that belongs to the current editing record
       if (editing && l.line_id === editing.line_id) {
         return true;
       }
-      
-      // Otherwise, hide if taken
       return !isTaken;
     })
     .map((l) => ({ value: l.line_id, label: l.line_name }));
@@ -126,8 +124,12 @@ const ClientUsersManager: React.FC = () => {
   const orgOptions = organizations.map((o) => ({ value: o.org_id, label: o.org_name }));
 
   const columns = [
-    { title: 'Organization Name', dataIndex: 'org_name', key: 'org_name' },
-    { title: 'Line Name', dataIndex: 'line_name', key: 'line_name' },
+    { 
+      title: 'Organization Name', 
+      dataIndex: 'org_name', 
+      key: 'org_name',
+      render: (v: string) => v || 'Capital Development Authority' 
+    },
     { title: 'Full Name', key: 'name', render: (_: any, r: ClientUserDTO) => `${r.first_name} ${r.last_name || ''}` },
     { title: 'Username', dataIndex: 'username', key: 'username' },
     { title: 'Designation', dataIndex: 'user_designation', key: 'user_designation' },
