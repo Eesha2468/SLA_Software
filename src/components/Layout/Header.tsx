@@ -41,12 +41,22 @@ const Header: React.FC<HeaderProps> = ({ collapsed, onToggle, onLogout }) => {
   ];
 
   const userString = sessionStorage.getItem('user');
-  const user = userString ? JSON.parse(userString) : { first_name: 'Admin' };
+  const user = (() => {
+    try {
+      if (!userString) return { first_name: 'Admin' };
+      const parsed = JSON.parse(userString);
+      return typeof parsed === 'object' && parsed ? parsed : { first_name: 'Admin' };
+    } catch {
+      return { first_name: 'Admin' };
+    }
+  })();
 
   const [orgName, setOrgName] = React.useState<string>(() => {
     try {
       const settings = sessionStorage.getItem('settings');
-      return settings ? JSON.parse(settings).organization : '';
+      if (!settings) return '';
+      const parsed = JSON.parse(settings);
+      return typeof parsed === 'object' && parsed ? (parsed.organization || '') : '';
     } catch {
       return '';
     }
@@ -57,7 +67,8 @@ const Header: React.FC<HeaderProps> = ({ collapsed, onToggle, onLogout }) => {
       try {
         const settings = sessionStorage.getItem('settings');
         if (settings) {
-          setOrgName(JSON.parse(settings).organization);
+          const parsed = JSON.parse(settings);
+          setOrgName(typeof parsed === 'object' && parsed ? (parsed.organization || '') : '');
         }
       } catch (e) {
         console.error('Failed to sync settings', e);

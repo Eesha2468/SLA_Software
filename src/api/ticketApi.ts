@@ -43,68 +43,6 @@ export interface TicketTrailDTO {
   line_id: number;
 }
 
-export const fetchTickets = async (user_id?: number, user_type?: string): Promise<TicketDTO[]> => {
-  const url = getApiUrl('/tickets');
-  if (user_id !== undefined) url.searchParams.append('user_id', String(user_id));
-  if (user_type !== undefined) url.searchParams.append('user_type', user_type);
-  
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to fetch tickets');
-  }
-  return response.json();
-};
-
-export const createTicketInDb = async (data: TicketDTO): Promise<TicketDTO> => {
-  const response = await fetch(`${API_BASE_URL}/tickets`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to create ticket');
-  }
-  return response.json();
-};
-
-export const updateTicketInDb = async (data: Partial<TicketDTO>): Promise<TicketDTO> => {
-  const response = await fetch(`${API_BASE_URL}/tickets`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to update ticket');
-  }
-  return response.json();
-};
-
-export const deleteTicketInDb = async (ticket_id: number): Promise<void> => {
-  const response = await fetch(`${API_BASE_URL}/tickets/${ticket_id}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to delete ticket');
-  }
-};
-
-export const fetchTicketTrail = async (ticket_no: string): Promise<TicketTrailDTO[]> => {
-  const response = await fetch(`${API_BASE_URL}/tickets/trail/${ticket_no}`);
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to fetch ticket trail');
-  }
-  return response.json();
-};
-
 export interface DashboardStatsDTO {
   total: number;
   total_sent: number;
@@ -137,50 +75,129 @@ export interface RecentTicketDTO {
   creator_name?: string;
 }
 
+const parseJsonResponse = async (response: Response) => {
+  const text = await response.text();
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    // Non-JSON response (e.g. HTML)
+  }
+
+  if (!response.ok) {
+    const errorMsg =
+      json?.error ||
+      json?.message ||
+      (text.includes('<!DOCTYPE') ? 'Server endpoint unavailable' : text.slice(0, 150)) ||
+      'Request failed';
+    throw new Error(errorMsg);
+  }
+
+  return json;
+};
+
+export const fetchTickets = async (user_id?: number, user_type?: string): Promise<TicketDTO[]> => {
+  const url = getApiUrl('/tickets');
+  if (user_id !== undefined) url.searchParams.append('user_id', String(user_id));
+  if (user_type !== undefined) url.searchParams.append('user_type', user_type);
+
+  const response = await fetch(url.toString());
+  return parseJsonResponse(response);
+};
+
+export const createTicketInDb = async (data: TicketDTO): Promise<TicketDTO> => {
+  const url = getApiUrl('/tickets');
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  return parseJsonResponse(response);
+};
+
+export const updateTicketInDb = async (data: Partial<TicketDTO>): Promise<TicketDTO> => {
+  const url = getApiUrl('/tickets');
+  const response = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  return parseJsonResponse(response);
+};
+
+export const deleteTicketInDb = async (ticket_id: number): Promise<void> => {
+  const url = getApiUrl(`/tickets/${ticket_id}`);
+  const response = await fetch(url.toString(), {
+    method: 'DELETE',
+  });
+  await parseJsonResponse(response);
+};
+
+export const fetchTicketTrail = async (ticket_no: string): Promise<TicketTrailDTO[]> => {
+  const url = getApiUrl(`/tickets/trail/${ticket_no}`);
+  const response = await fetch(url.toString());
+  return parseJsonResponse(response);
+};
+
 export const fetchDashboardStats = async (line_id?: string): Promise<DashboardStatsDTO> => {
   const url = getApiUrl('/dashboard/stats');
   if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
   const response = await fetch(url.toString());
-  if (!response.ok) throw new Error('Failed to fetch dashboard statistics');
-  return response.json();
+  return parseJsonResponse(response);
 };
 
 export const fetchDashboardCharts = async (line_id?: string): Promise<DashboardChartsDTO> => {
   const url = getApiUrl('/dashboard/charts');
   if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
   const response = await fetch(url.toString());
-  if (!response.ok) throw new Error('Failed to fetch dashboard charts');
-  return response.json();
+  return parseJsonResponse(response);
 };
 
 export const fetchDashboardRecentTickets = async (line_id?: string): Promise<RecentTicketDTO[]> => {
   const url = getApiUrl('/dashboard/recent-tickets');
   if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
   const response = await fetch(url.toString());
-  if (!response.ok) throw new Error('Failed to fetch recent tickets');
-  return response.json();
+  return parseJsonResponse(response);
 };
 
 export const fetchUnreadCount = async (user_id: number, user_type: string): Promise<number> => {
-  const response = await fetch(`${API_BASE_URL}/tickets/unread-count?user_id=${user_id}&user_type=${user_type}`);
-  if (!response.ok) return 0;
-  const data = await response.json();
-  return data.count || 0;
+  try {
+    const url = getApiUrl(`/tickets/unread-count?user_id=${user_id}&user_type=${user_type}`);
+    const response = await fetch(url.toString());
+    if (!response.ok) return 0;
+    const data = await parseJsonResponse(response);
+    return data.count || 0;
+  } catch {
+    return 0;
+  }
 };
 
 export const markTicketAsRead = async (ticket_id: number, user_id: number, user_type: string): Promise<void> => {
-  await fetch(`${API_BASE_URL}/tickets/mark-read/${ticket_id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id, user_type }),
-  });
+  try {
+    const url = getApiUrl(`/tickets/mark-read/${ticket_id}`);
+    await fetch(url.toString(), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id, user_type }),
+    });
+  } catch (e) {
+    console.error('Failed to mark ticket as read:', e);
+  }
 };
 
 export const markAllTicketsAsRead = async (user_id: number, user_type: string): Promise<void> => {
-  await fetch(`${API_BASE_URL}/tickets/mark-all-read`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id, user_type }),
-  });
+  try {
+    const url = getApiUrl(`/tickets/mark-all-read`);
+    await fetch(url.toString(), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id, user_type }),
+    });
+  } catch (e) {
+    console.error('Failed to mark all tickets as read:', e);
+  }
 };
-

@@ -174,21 +174,21 @@ const NewTicket: React.FC = () => {
     }
 
     const dbPayload: any = {
-      line_id: values.line_id,
+      line_id: Number(values.line_id),
       ticket_number: ticketNumber,
-      ticket_title: values.title,
-      kpi_main_category_id: values.kpi_main_category_id,
-      kpi_sub_category_id: values.kpi_sub_category_id,
-      fl_category_id: values.fl_category_id,
-      ticket_status: values.ticket_status,
-      ticket_description: values.ticket_description,
-      sp_id: Number(spId || 0),
-      org_id: Number(orgId || 0),
+      ticket_title: values.title || 'SLA Fault Report',
+      kpi_main_category_id: Number(values.kpi_main_category_id),
+      kpi_sub_category_id: Number(values.kpi_sub_category_id),
+      fl_category_id: Number(values.fl_category_id),
+      ticket_status: values.ticket_status || 'Open',
+      ticket_description: values.ticket_description || '',
+      sp_id: Number(spId || 1),
+      org_id: Number(orgId || 1),
       created_by: loggedInUser ? loggedInUser.id : 1, 
       created_by_type: loggedInUser ? loggedInUser.user_type : 'USER',
-      reported_to: values.reported_to,
+      reported_to: values.reported_to ? Number(values.reported_to) : null,
       reported_to_type: isRegularUser ? 'CLIENT_USER' : 'USER',
-      attachment: attachmentBase64 as string,
+      attachment: (attachmentBase64 as string) || null,
     };
 
     try {

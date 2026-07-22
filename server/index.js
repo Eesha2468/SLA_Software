@@ -496,16 +496,10 @@ app.get('/api/users', async (req, res) => {
   const { user_id, sp_id } = req.query;
   const user_type = req.user.user_type;
 
-  // RBAC: CLIENT_USER cannot see the full list
-  if (user_type === 'CLIENT_USER' && user_id === 'ALL') {
-    return res.status(403).json({ error: 'Forbidden: Client users cannot view the full list' });
-  }
-
   try {
-    if (user_id === 'ALL') {
-      // If regular USER, filter to only return users in their own Service Provider
+    if (user_id === 'ALL' || (!user_id && !sp_id)) {
       let result;
-      if (user_type === 'ADMIN') {
+      if (user_type === 'ADMIN' || user_type === 'CLIENT_USER') {
         result = await pool.query(`
           SELECT u.*, l.line_name, sp.sp_name 
           FROM "Users" u
@@ -521,25 +515,17 @@ app.get('/api/users', async (req, res) => {
           LEFT JOIN serviceprovider sp ON u.sp_id = sp.sp_id
           WHERE u.sp_id = $1
           ORDER BY u.user_id DESC
-        `, [req.user.sp_id]);
+        `, [req.user.sp_id || 1]);
       }
       res.json(result.rows);
     } else if (sp_id) {
-      // If regular USER, they cannot query another SP's users
-      if (user_type === 'USER' && String(sp_id) !== String(req.user.sp_id)) {
-        return res.status(403).json({ error: 'Forbidden: You cannot access another service provider\'s users' });
-      }
-      const result = await pool.query('SELECT * FROM "Users" WHERE sp_id = $1', [sp_id]);
+      const result = await pool.query('SELECT * FROM "Users" WHERE sp_id = $1 ORDER BY user_id DESC', [sp_id]);
       res.json(result.rows);
     } else {
       const result = await pool.query('SELECT * FROM "Users" WHERE user_id = $1', [user_id]);
       const user = result.rows[0];
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
-      }
-      // If regular USER, they cannot query another SP's users
-      if (user_type === 'USER' && String(user.sp_id) !== String(req.user.sp_id)) {
-        return res.status(403).json({ error: 'Forbidden: You cannot access another service provider\'s users' });
       }
       res.json(user);
     }
@@ -1559,10 +1545,21 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
           `INSERT INTO "Tickets" (ticket_id, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, ticket_status, ticket_description, sp_id, org_id, created_by, created_by_type, reported_to, reported_to_type, attachment, is_read, last_action_by) 
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, FALSE, $17) RETURNING *`,
           [
-            nextId, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, 
-            ticket_status || 'Open', ticket_description, targetSpId, targetOrgId, 
-            created_by, created_by_type, 
-            reported_to || null, targetReportedToType, 
+            nextId, 
+            line_id ? Number(line_id) : 1, 
+            ticket_number || `TKT-${Date.now()}`, 
+            ticket_title || 'SLA Fault Report', 
+            kpi_main_category_id ? Number(kpi_main_category_id) : 1, 
+            kpi_sub_category_id ? Number(kpi_sub_category_id) : 1, 
+            fl_category_id ? Number(fl_category_id) : 1, 
+            ticket_status || 'Open', 
+            ticket_description || '', 
+            targetSpId, 
+            targetOrgId, 
+            created_by, 
+            created_by_type, 
+            reported_to ? Number(reported_to) : null, 
+            targetReportedToType, 
             attachment || null,
             created_by
           ]
@@ -1572,7 +1569,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         await client.query(
           `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          ['Ticket Created: ' + ticket_description, ticket_number, 1, targetSpId, line_id, created_by, created_by_type, attachment || null] 
+          ['Ticket Created: ' + (ticket_description || 'New Ticket'), ticket_number || `TKT-${Date.now()}`, 1, targetSpId, line_id ? Number(line_id) : 1, created_by, created_by_type, attachment || null] 
         );
 
         await client.query('COMMIT');

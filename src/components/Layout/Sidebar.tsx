@@ -30,7 +30,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
   const [systemName, setSystemName] = useState<string>(() => {
     try {
       const settings = sessionStorage.getItem('settings');
-      return settings ? JSON.parse(settings).system_name : 'SLA System';
+      if (!settings) return 'SLA System';
+      const parsed = JSON.parse(settings);
+      return typeof parsed === 'object' && parsed ? (parsed.system_name || 'SLA System') : 'SLA System';
     } catch {
       return 'SLA System';
     }
@@ -41,7 +43,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
       try {
         const settings = sessionStorage.getItem('settings');
         if (settings) {
-          setSystemName(JSON.parse(settings).system_name || 'SLA System');
+          const parsed = JSON.parse(settings);
+          setSystemName(typeof parsed === 'object' && parsed ? (parsed.system_name || 'SLA System') : 'SLA System');
         }
       } catch (e) {
         console.error('Failed to sync system name', e);
@@ -54,7 +57,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
   const getTicketCount = async () => {
     try {
       const userString = sessionStorage.getItem('user');
-      const loggedInUser = userString ? JSON.parse(userString) : null;
+      const loggedInUser = (() => {
+        try {
+          if (!userString) return null;
+          const parsed = JSON.parse(userString);
+          return typeof parsed === 'object' && parsed ? parsed : null;
+        } catch {
+          return null;
+        }
+      })();
       if (!loggedInUser) return;
 
       const count = await fetchUnreadCount(loggedInUser.id, loggedInUser.user_type);
