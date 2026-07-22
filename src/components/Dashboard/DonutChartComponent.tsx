@@ -3,7 +3,7 @@ import { Card, Empty } from 'antd';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface DonutChartProps {
-  data: { name: string; value: number }[];
+  data?: { name: string; value: number }[];
   title: string;
   colors?: string[];
 }
@@ -11,7 +11,8 @@ interface DonutChartProps {
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444'];
 
 const DonutChartComponent: React.FC<DonutChartProps> = ({ data, title, colors = COLORS }) => {
-  const hasData = data && data.length > 0 && data.some((d) => d.value > 0);
+  const safeData = Array.isArray(data) ? data : [];
+  const hasData = safeData.length > 0 && safeData.some((d) => d.value > 0);
 
   return (
     <Card
@@ -22,8 +23,8 @@ const DonutChartComponent: React.FC<DonutChartProps> = ({ data, title, colors = 
       <ResponsiveContainer width="100%" height={220}>
         {hasData ? (
           <PieChart>
-            <Pie data={data} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={3}>
-              {data.map((_, index) => (
+            <Pie data={safeData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={3}>
+              {safeData.map((_, index) => (
                 <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
               ))}
             </Pie>
