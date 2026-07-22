@@ -88,6 +88,7 @@ const parseJsonResponse = async (response: Response) => {
     const errorMsg =
       json?.error ||
       json?.message ||
+      (text.includes('<!DOCTYPE') ? 'Backend server (node server/index.js) is not reachable' : text.slice(0, 150)) ||
       'Request failed';
     throw new Error(errorMsg);
   }

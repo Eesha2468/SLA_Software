@@ -1,4 +1,4 @@
-import { API_BASE_URL, getApiUrl } from './apiConfig';
+import { getApiUrl } from './apiConfig';
 
 export interface ClientUserDTO {
   client_user_id: number;
@@ -11,12 +11,33 @@ export interface ClientUserDTO {
   user_designation?: string;
   emp_id?: string;
   line_id: number;
-  line_name?: string; // from join
+  line_name?: string;
   org_id: number;
-  org_name?: string; // from join
+  org_name?: string;
   active_status: boolean;
   user_email?: string;
 }
+
+const safeParseJson = async (response: Response) => {
+  const text = await response.text();
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    // Non-JSON response
+  }
+
+  if (!response.ok) {
+    const errorMsg =
+      json?.error ||
+      json?.message ||
+      (text.includes('<!DOCTYPE') ? 'Backend server unreachable' : text.slice(0, 150)) ||
+      'Request failed';
+    throw new Error(errorMsg);
+  }
+
+  return json;
+};
 
 export const fetchClientUsers = async (org_id?: number | string, user_type?: string): Promise<ClientUserDTO[]> => {
   const url = getApiUrl('/client-users');
@@ -31,49 +52,37 @@ export const fetchClientUsers = async (org_id?: number | string, user_type?: str
   }
 
   const response = await fetch(url.toString());
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to fetch client users');
-  }
-  return response.json();
+  return safeParseJson(response);
 };
 
 export const createClientUser = async (data: Omit<ClientUserDTO, 'client_user_id'>): Promise<ClientUserDTO> => {
-  const response = await fetch(`${API_BASE_URL}/client-users`, {
+  const url = getApiUrl('/client-users');
+  const response = await fetch(url.toString(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(data),
   });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to create client user');
-  }
-  return response.json();
+  return safeParseJson(response);
 };
 
 export const updateClientUser = async (data: ClientUserDTO): Promise<ClientUserDTO> => {
-  const response = await fetch(`${API_BASE_URL}/client-users`, {
+  const url = getApiUrl('/client-users');
+  const response = await fetch(url.toString(), {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(data),
   });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to update client user');
-  }
-  return response.json();
+  return safeParseJson(response);
 };
 
 export const deleteClientUser = async (client_user_id: number): Promise<void> => {
-  const response = await fetch(`${API_BASE_URL}/client-users/${client_user_id}`, {
+  const url = getApiUrl(`/client-users/${client_user_id}`);
+  const response = await fetch(url.toString(), {
     method: 'DELETE',
   });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to delete client user');
-  }
+  await safeParseJson(response);
 };
