@@ -1,4 +1,4 @@
-import { getApiUrl } from './apiConfig';
+import { getApiUrl, getAuthHeaders } from './apiConfig';
 
 export interface TicketDTO {
   ticket_id?: number;
@@ -12,6 +12,7 @@ export interface TicketDTO {
   created_by_type?: string;
   creator_name?: string;
   reported_to?: number;
+  reported_to_type?: string;
   reported_to_name?: string;
   kpi_main_category_id: number;
   main_category_name?: string;
@@ -27,6 +28,8 @@ export interface TicketDTO {
   remarks?: string;
   updated_by?: number;
   attachment?: string;
+  is_read?: boolean;
+  last_action_by?: number;
 }
 
 export interface TicketTrailDTO {
@@ -81,7 +84,7 @@ export const fetchTickets = async (user_id?: number, user_type?: string): Promis
     if (user_id !== undefined) url.searchParams.append('user_id', String(user_id));
     if (user_type !== undefined) url.searchParams.append('user_type', user_type);
 
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), { headers: getAuthHeaders() });
     if (response.ok) {
       const data = await response.json();
       if (Array.isArray(data)) return data;
@@ -92,32 +95,43 @@ export const fetchTickets = async (user_id?: number, user_type?: string): Promis
   return [];
 };
 
-export const createTicketInDb = async (data: TicketDTO): Promise<TicketDTO> => {
+export const fetchTicketById = async (ticket_id: string | number): Promise<TicketDTO | null> => {
   try {
-    const url = getApiUrl('/tickets');
-    const response = await fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
+    const url = getApiUrl(`/tickets/${ticket_id}`);
+    const response = await fetch(url.toString(), { headers: getAuthHeaders() });
     if (response.ok) {
-      const result = await response.json();
-      if (result && typeof result === 'object') return result;
+      const data = await response.json();
+      if (data && typeof data === 'object') return data;
     }
   } catch (e) {
-    console.warn('Backend server offline, generating ticket locally:', e);
+    console.warn('Backend fetch by ticket ID failed:', e);
+  }
+  return null;
+};
+
+export const createTicketInDb = async (data: TicketDTO): Promise<TicketDTO> => {
+  const url = getApiUrl('/tickets');
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+
+  if (response.ok) {
+    const result = await response.json();
+    if (result && typeof result === 'object') return result;
+  } else {
+    let errorMsg = 'Failed to create ticket on backend';
+    try {
+      const errObj = await response.json();
+      errorMsg = errObj.error || errObj.message || errorMsg;
+    } catch {
+      // fallback
+    }
+    throw new Error(errorMsg);
   }
 
-  // Guaranteed zero-error local ticket generation fallback
-  const mockTicket: TicketDTO = {
-    ...data,
-    ticket_id: Math.floor(Math.random() * 90000) + 10000,
-    created_at: new Date().toISOString(),
-  };
-
-  return mockTicket;
+  throw new Error('Failed to create ticket: Invalid response format');
 };
 
 export const updateTicketInDb = async (data: Partial<TicketDTO>): Promise<TicketDTO> => {
@@ -125,9 +139,7 @@ export const updateTicketInDb = async (data: Partial<TicketDTO>): Promise<Ticket
     const url = getApiUrl('/tickets');
     const response = await fetch(url.toString(), {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
     if (response.ok) {
@@ -145,6 +157,7 @@ export const deleteTicketInDb = async (ticket_id: number): Promise<void> => {
     const url = getApiUrl(`/tickets/${ticket_id}`);
     await fetch(url.toString(), {
       method: 'DELETE',
+      headers: getAuthHeaders(),
     });
   } catch (e) {
     console.warn('Backend delete failed:', e);
@@ -154,7 +167,7 @@ export const deleteTicketInDb = async (ticket_id: number): Promise<void> => {
 export const fetchTicketTrail = async (ticket_no: string): Promise<TicketTrailDTO[]> => {
   try {
     const url = getApiUrl(`/tickets/trail/${ticket_no}`);
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), { headers: getAuthHeaders() });
     if (response.ok) {
       const data = await response.json();
       if (Array.isArray(data)) return data;
@@ -169,7 +182,7 @@ export const fetchDashboardStats = async (line_id?: string): Promise<DashboardSt
   try {
     const url = getApiUrl('/dashboard/stats');
     if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), { headers: getAuthHeaders() });
     if (response.ok) return response.json();
   } catch (e) {
     console.warn('Fetch stats failed:', e);
@@ -194,7 +207,7 @@ export const fetchDashboardCharts = async (line_id?: string): Promise<DashboardC
   try {
     const url = getApiUrl('/dashboard/charts');
     if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), { headers: getAuthHeaders() });
     if (response.ok) return response.json();
   } catch (e) {
     console.warn('Fetch charts failed:', e);
@@ -222,7 +235,7 @@ export const fetchDashboardRecentTickets = async (line_id?: string): Promise<Rec
   try {
     const url = getApiUrl('/dashboard/recent-tickets');
     if (line_id && line_id !== 'All') url.searchParams.append('line_id', line_id);
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), { headers: getAuthHeaders() });
     if (response.ok) return response.json();
   } catch (e) {
     console.warn('Fetch recent tickets failed:', e);
@@ -233,7 +246,7 @@ export const fetchDashboardRecentTickets = async (line_id?: string): Promise<Rec
 export const fetchUnreadCount = async (user_id: number, user_type: string): Promise<number> => {
   try {
     const url = getApiUrl(`/tickets/unread-count?user_id=${user_id}&user_type=${user_type}`);
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), { headers: getAuthHeaders() });
     if (!response.ok) return 0;
     const data = await response.json();
     return data.count || 0;
@@ -247,7 +260,7 @@ export const markTicketAsRead = async (ticket_id: number, user_id: number, user_
     const url = getApiUrl(`/tickets/mark-read/${ticket_id}`);
     await fetch(url.toString(), {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ user_id, user_type }),
     });
   } catch (e) {
@@ -260,7 +273,7 @@ export const markAllTicketsAsRead = async (user_id: number, user_type: string): 
     const url = getApiUrl(`/tickets/mark-all-read`);
     await fetch(url.toString(), {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ user_id, user_type }),
     });
   } catch (e) {

@@ -39,10 +39,13 @@ cd SLA_Software
 # 2. Install dependencies
 npm install
 
-# 3. Start development server
+# 3. Start Backend Server (in one terminal)
+npm run server
+
+# 4. Start Frontend Development Server (in another terminal)
 npm run dev
 
-# 4. Open in browser
+# 5. Open in browser
 # http://localhost:5173
 ```
 

@@ -1,4 +1,4 @@
-import { API_BASE_URL } from './apiConfig';
+import { API_BASE_URL, getAuthHeaders } from './apiConfig';
 
 export interface LineDTO {
   line_id: number;
@@ -16,7 +16,7 @@ export interface LineDTO {
 }
 
 export const fetchLines = async (): Promise<LineDTO[]> => {
-  const response = await fetch(`${API_BASE_URL}/lines?line_id=ALL`);
+  const response = await fetch(`${API_BASE_URL}/lines?line_id=ALL`, { headers: getAuthHeaders() });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || 'Failed to fetch lines');
@@ -27,9 +27,7 @@ export const fetchLines = async (): Promise<LineDTO[]> => {
 export const createLine = async (data: Omit<LineDTO, 'line_id'>): Promise<LineDTO> => {
   const response = await fetch(`${API_BASE_URL}/lines`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(data),
   });
   if (!response.ok) {
@@ -42,9 +40,7 @@ export const createLine = async (data: Omit<LineDTO, 'line_id'>): Promise<LineDT
 export const updateLine = async (data: LineDTO): Promise<LineDTO> => {
   const response = await fetch(`${API_BASE_URL}/lines`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(data),
   });
   if (!response.ok) {
@@ -57,6 +53,7 @@ export const updateLine = async (data: LineDTO): Promise<LineDTO> => {
 export const deleteLine = async (line_id: number): Promise<void> => {
   const response = await fetch(`${API_BASE_URL}/lines/${line_id}`, {
     method: 'DELETE',
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     const error = await response.json();

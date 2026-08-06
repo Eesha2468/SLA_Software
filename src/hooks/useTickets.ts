@@ -37,15 +37,11 @@ export const useTickets = () => {
     try {
       const newTicket = await ticketService.create(ticket);
       setTickets((prev) => [newTicket, ...(prev || []).filter(t => t.ticket_number !== newTicket.ticket_number)]);
+      await loadTickets();
       return newTicket;
     } catch (e) {
-      const fallbackTicket: TicketDTO = {
-        ...ticket,
-        ticket_id: Math.floor(Math.random() * 90000) + 10000,
-        created_at: new Date().toISOString(),
-      };
-      setTickets((prev) => [fallbackTicket, ...(prev || [])]);
-      return fallbackTicket;
+      console.error("Error creating ticket:", e);
+      throw e;
     } finally {
       setLoading(false);
     }
@@ -62,8 +58,17 @@ export const useTickets = () => {
   };
 
   const getTicket = async (id: string) => {
-    const data = await ticketService.getAll();
-    return data.find(t => String(t.ticket_id) === id);
+    if (!id) return null;
+    try {
+      const direct = await ticketService.getById(id);
+      if (direct && (direct.ticket_id || direct.ticket_number)) {
+        return direct;
+      }
+    } catch (e) {
+      console.warn("Direct ticket lookup failed, checking local memory:", e);
+    }
+    const all = await ticketService.getAll();
+    return (all || []).find(t => String(t.ticket_id) === String(id) || t.ticket_number === id) || null;
   };
 
   useEffect(() => {

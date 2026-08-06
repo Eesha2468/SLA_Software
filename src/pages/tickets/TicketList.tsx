@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Table, Tag, Typography, Button, Space, Modal, Form, Select, Input, message, Checkbox, Upload, Popconfirm } from "antd";
-import { EditOutlined, UploadOutlined, DeleteOutlined, SearchOutlined, PlusCircleOutlined } from "@ant-design/icons";
+import { EyeOutlined, UploadOutlined, DeleteOutlined, SearchOutlined, PlusCircleOutlined } from "@ant-design/icons";
 import { useTickets } from "../../hooks/useTickets";
 import { useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
@@ -40,9 +40,11 @@ const TicketList: React.FC<TicketListProps> = (props) => {
     }
   })();
 
+  const uniqueTickets = (tickets || []).filter((ticket, index, self) =>
+    index === self.findIndex((t) => (t.ticket_number && ticket.ticket_number ? t.ticket_number === ticket.ticket_number : t.ticket_id === ticket.ticket_id))
+  );
 
-
-  const filteredTickets = (tickets || []).filter((t) => {
+  const filteredTickets = uniqueTickets.filter((t) => {
     const search = searchText.toLowerCase();
     return (
       t.ticket_number?.toLowerCase().includes(search) ||
@@ -58,6 +60,22 @@ const TicketList: React.FC<TicketListProps> = (props) => {
 
     if (!isReceiver && !isSender) {
       message.error("You do not have permission to edit this ticket.");
+      return;
+    }
+
+    const normalizedStatus = (record.ticket_status || '').trim().toLowerCase();
+    if (['resolved', 'close', 'closed', 'cancel', 'cancelled'].includes(normalizedStatus)) {
+      message.warning("This ticket is resolved or closed. No further responses can be sent.");
+      return;
+    }
+
+    const isClientUser = loggedInUser?.user_type === 'CLIENT_USER';
+    const isMyTurn = isClientUser 
+      ? (record.reported_to_type === 'CLIENT_USER') 
+      : (record.reported_to_type !== 'CLIENT_USER');
+
+    if (!isMyTurn) {
+      message.warning(`Waiting for response from ${isClientUser ? 'Service Provider' : 'Client'}. You cannot send a response right now.`);
       return;
     }
 
@@ -104,24 +122,37 @@ const TicketList: React.FC<TicketListProps> = (props) => {
     }
   };
 
+  const isUnread = (record: TicketDTO) => {
+    if (!loggedInUser) return false;
+    const currentUserId = Number(loggedInUser.id);
+    const lastActionBy = record.last_action_by ? Number(record.last_action_by) : Number(record.created_by);
+    return record.is_read === false && lastActionBy !== currentUserId;
+  };
+
   const columns = [
     {
       title: "Ticket #",
       dataIndex: "ticket_number",
       key: "ticket_number",
-      width: 150,
-      render: (text: string, record: TicketDTO) => (
-        <Space direction="vertical" size={0}>
-          <Text strong style={{ color: '#1890ff' }}>{text}</Text>
-          <Text type="secondary" style={{ fontSize: '11px' }}>{record.ticket_title}</Text>
-        </Space>
-      ),
-    },
-    {
-      title: "Description",
-      dataIndex: "ticket_description",
-      key: "ticket_description",
-      ellipsis: true,
+      width: 180,
+      render: (text: string, record: TicketDTO) => {
+        const unread = isUnread(record);
+        return (
+          <Space direction="vertical" size={0}>
+            <Space align="center" size={6}>
+              <Text strong style={{ color: unread ? '#ff4d4f' : '#1890ff', fontSize: '14px' }}>
+                {text}
+              </Text>
+              {unread && (
+                <Tag color="error" style={{ fontSize: '10px', lineHeight: '14px', padding: '0 4px', margin: 0, fontWeight: 'bold' }}>
+                  NEW / UPDATED
+                </Tag>
+              )}
+            </Space>
+            <Text type="secondary" style={{ fontSize: '11px' }}>{record.ticket_title}</Text>
+          </Space>
+        );
+      },
     },
     {
       title: "Service Provider",
@@ -130,11 +161,11 @@ const TicketList: React.FC<TicketListProps> = (props) => {
       width: 150,
     },
     {
-        title: "Line",
-        dataIndex: "line_name",
-        key: "line_name",
-        width: 100,
-      },
+      title: "Line",
+      dataIndex: "line_name",
+      key: "line_name",
+      width: 100,
+    },
     {
       title: "Status",
       dataIndex: "ticket_status",
@@ -148,17 +179,17 @@ const TicketList: React.FC<TicketListProps> = (props) => {
       },
     },
     {
-        title: "Created By",
-        dataIndex: "creator_name",
-        key: "creator_name",
-        width: 150,
-      },
+      title: "Created By",
+      dataIndex: "creator_name",
+      key: "creator_name",
+      width: 150,
+    },
     {
-        title: "Reported To",
-        dataIndex: "reported_to_name",
-        key: "reported_to_name",
-        width: 150,
-      },
+      title: "Reported To",
+      dataIndex: "reported_to_name",
+      key: "reported_to_name",
+      width: 150,
+    },
     {
       title: "Created At",
       dataIndex: "created_at",
@@ -167,30 +198,27 @@ const TicketList: React.FC<TicketListProps> = (props) => {
       render: (date: string) => dayjs(date).format("MMM DD, YYYY HH:mm"),
     },
     {
+      title: "Description",
+      dataIndex: "ticket_description",
+      key: "ticket_description",
+      ellipsis: true,
+    },
+    {
       title: "Actions",
       key: "actions",
-      width: 150,
-      render: (_: any, record: TicketDTO) => {
-        const canEdit = String(loggedInUser?.id) === String(record.reported_to);
-        const isFinalStatus = ['resolved', 'cancel', 'close'].includes(record.ticket_status?.toLowerCase() || '');
-        
-        return (
-          <Space size="middle" onClick={(e) => e.stopPropagation()}>
-            {canEdit && !isFinalStatus && (
-              <Button 
-                type="text" 
-                icon={<EditOutlined />} 
-                onClick={(e) => handleEdit(record, e)} 
-              />
-            )}
-            {!canEdit && (
-              <Text type="secondary" style={{ fontSize: '12px' }}>
-                {isFinalStatus ? 'Locked' : 'View Only'}
-              </Text>
-            )}
-          </Space>
-        );
-      },
+      width: 100,
+      render: (_: any, record: TicketDTO) => (
+        <Space size="middle" onClick={(e) => e.stopPropagation()}>
+          <Button 
+            type="text" 
+            icon={<EyeOutlined style={{ fontSize: 16, color: '#1890ff' }} />} 
+            onClick={(e) => {
+              e.stopPropagation();
+              window.open(`/tickets/${record.ticket_id}`, '_blank');
+            }} 
+          />
+        </Space>
+      ),
     },
   ];
 
@@ -214,7 +242,7 @@ const TicketList: React.FC<TicketListProps> = (props) => {
         loading={loading}
         onRow={(record) => ({
           onClick: () => navigate(`/tickets/${record.ticket_id}`),
-          style: { cursor: 'pointer' }
+          style: { cursor: 'pointer', backgroundColor: isUnread(record) ? '#fff1f0' : undefined }
         })}
         pagination={{ pageSize: 10 }}
         size="middle"

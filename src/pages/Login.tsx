@@ -27,6 +27,14 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         body: JSON.stringify(values),
       });
 
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error("Non-JSON response received:", response.status, text);
+        message.error(`Backend server error (${response.status}). Please ensure the backend server is running on port 5000.`);
+        return;
+      }
+
       const data = await response.json();
 
       if (response.ok && data.success) {
@@ -39,7 +47,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       }
     } catch (error) {
       console.error("Login error:", error);
-      message.error("Server connection failed!");
+      message.error("Server connection failed! Please ensure backend is running.");
     } finally {
       setLoading(false);
     }

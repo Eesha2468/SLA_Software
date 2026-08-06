@@ -183,10 +183,9 @@ const FaultLevelCategoryManager: React.FC = () => {
             <Col xs={24} md={8}>
               <Form.Item name="fl_name" label="Fault Name" rules={[{ required: true }]}>
                 <Select placeholder="Select fault" size="large" disabled={!selectedSP}>
-                  <Select.Option value="Major">Major</Select.Option>
-                  <Select.Option value="Severe">Severe</Select.Option>
                   <Select.Option value="Minor">Minor</Select.Option>
                   <Select.Option value="Material">Material</Select.Option>
+                  <Select.Option value="Severe">Severe</Select.Option>
                 </Select>
               </Form.Item>
             </Col>

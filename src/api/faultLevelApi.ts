@@ -1,4 +1,4 @@
-import { API_BASE_URL } from './apiConfig';
+import { API_BASE_URL, getAuthHeaders } from './apiConfig';
 
 export interface FaultLevelCategoryDTO {
   fl_category_id: number;
@@ -13,7 +13,7 @@ export interface FaultLevelCategoryDTO {
 }
 
 export const fetchFaultLevelCategories = async (): Promise<FaultLevelCategoryDTO[]> => {
-  const response = await fetch(`${API_BASE_URL}/fault-level-categories?fl_category_id=ALL`);
+  const response = await fetch(`${API_BASE_URL}/fault-level-categories?fl_category_id=ALL`, { headers: getAuthHeaders() });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || 'Failed to fetch fault level categories');
@@ -24,9 +24,7 @@ export const fetchFaultLevelCategories = async (): Promise<FaultLevelCategoryDTO
 export const createFaultLevelCategory = async (data: Omit<FaultLevelCategoryDTO, 'fl_category_id'>): Promise<FaultLevelCategoryDTO> => {
   const response = await fetch(`${API_BASE_URL}/fault-level-categories`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(data),
   });
   if (!response.ok) {
@@ -39,9 +37,7 @@ export const createFaultLevelCategory = async (data: Omit<FaultLevelCategoryDTO,
 export const updateFaultLevelCategory = async (data: FaultLevelCategoryDTO): Promise<FaultLevelCategoryDTO> => {
   const response = await fetch(`${API_BASE_URL}/fault-level-categories`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify(data),
   });
   if (!response.ok) {
@@ -54,6 +50,7 @@ export const updateFaultLevelCategory = async (data: FaultLevelCategoryDTO): Pro
 export const deleteFaultLevelCategory = async (fl_category_id: number): Promise<void> => {
   const response = await fetch(`${API_BASE_URL}/fault-level-categories/${fl_category_id}`, {
     method: 'DELETE',
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     const error = await response.json();

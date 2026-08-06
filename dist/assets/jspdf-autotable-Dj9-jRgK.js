@@ -1,4 +1,4 @@
-import{l as K,d as X}from"./react-framework-VA9qcqtj.js";import{r as V}from"./jspdf-Dk_726ay.js";var Q={exports:{}};/*!
+import{l as K,d as X}from"./react-framework-VA9qcqtj.js";import{r as V}from"./jspdf-DpSNHaCj.js";var Q={exports:{}};/*!
  * 
  *               jsPDF AutoTable plugin v3.8.4
  *

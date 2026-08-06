@@ -106,8 +106,17 @@ const startServer = async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (user_id, user_type)
       );
+
+      CREATE INDEX IF NOT EXISTS idx_tickets_created_at ON "Tickets" (created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_tickets_ticket_id ON "Tickets" (ticket_id);
+      CREATE INDEX IF NOT EXISTS idx_tickets_line_id ON "Tickets" (line_id);
+      CREATE INDEX IF NOT EXISTS idx_tickets_sp_id ON "Tickets" (sp_id);
+      CREATE INDEX IF NOT EXISTS idx_tickets_org_id ON "Tickets" (org_id);
+      CREATE INDEX IF NOT EXISTS idx_tickets_created_by ON "Tickets" (created_by);
+      CREATE INDEX IF NOT EXISTS idx_tickets_reported_to ON "Tickets" (reported_to);
+      CREATE INDEX IF NOT EXISTS idx_ticket_trail_ticket_no ON "Ticket_trail" (ticket_no);
     `);
-    console.log('✅ Settings table initialized/verified successfully');
+    console.log('✅ Settings table and performance indexes initialized/verified successfully');
     client.release();
 
     app.listen(port, '0.0.0.0', () => {
@@ -1236,9 +1245,10 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
     }
     res.json({ message: 'KPI Sub-Category deleted successfully' });
     } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: err.message });
+      console.error(err.message);
+      res.status(500).json({ error: err.message });
     }
+  });
       /**
      * DASHBOARD & REAL-TIME STATS ENDPOINTS
      */
@@ -1249,7 +1259,9 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       let idx = paramIndexStart;
       let clause = '';
 
-      if (user.user_type === 'CLIENT_USER') {
+      if (user.user_type === 'ADMIN') {
+        clause = '1=1';
+      } else if (user.user_type === 'CLIENT_USER') {
         const orgId = user.org_id || 1;
         clause = `t.org_id = $${idx++}`;
         params.push(orgId);
@@ -1389,18 +1401,16 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         const monthlyTrend = allMonths.map(m => ({ name: m, value: monthlyMap.get(m) || 0 }));
 
         // Format Status Data
-        const statusCounts = { 'Open': 0, 'In-progress': 0, 'Resolved': 0, 'Cancelled': 0 };
+        const statusCounts = { 'Open': 0, 'Resolved': 0, 'Cancelled': 0 };
         statusRes.rows.forEach(r => {
           const st = (r.ticket_status || '').toLowerCase();
           if (st === 'open') statusCounts['Open'] += r.count;
-          else if (st === 'in progress' || st === 'in-progress') statusCounts['In-progress'] += r.count;
           else if (st === 'resolved' || st === 'close' || st === 'closed') statusCounts['Resolved'] += r.count;
           else if (st === 'cancel' || st === 'cancelled') statusCounts['Cancelled'] += r.count;
         });
 
         const statusData = [
           { name: 'Open', value: statusCounts['Open'] },
-          { name: 'In-progress', value: statusCounts['In-progress'] },
           { name: 'Resolved', value: statusCounts['Resolved'] },
           { name: 'Cancelled', value: statusCounts['Cancelled'] }
         ];
@@ -1467,7 +1477,12 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       const user = req.user;
       try {
         let query = `
-          SELECT t.*, 
+          SELECT t.ticket_id, t.guid, t.line_id, t.ticket_number, t.ticket_title, t.created_at,
+                 t.created_by, t.created_by_type, t.reported_to, t.reported_to_type,
+                 t.kpi_main_category_id, t.kpi_sub_category_id, t.fl_category_id,
+                 t.ticket_status, t.ticket_description, t.sp_id, t.org_id, NULL as remarks, NULL as updated_by,
+                 t.is_read, t.last_action_by,
+                 CASE WHEN t.attachment IS NOT NULL THEN TRUE ELSE FALSE END as has_attachment,
                  l.line_name, 
                  sp.sp_name, 
                  o.org_name,
@@ -1501,6 +1516,55 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
       } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error while fetching tickets' });
+      }
+    });
+
+    // GET SINGLE TICKET BY ID OR TICKET NUMBER
+    app.get('/api/tickets/:ticket_id', async (req, res, next) => {
+      const { ticket_id } = req.params;
+
+      if (ticket_id === 'unread-count' || ticket_id === 'mark-all-read') {
+        return next();
+      }
+
+      try {
+        const isNumeric = /^\d+$/.test(ticket_id);
+        const query = `
+          SELECT t.*, 
+                 l.line_name, 
+                 sp.sp_name, 
+                 o.org_name,
+                 mc.kpi_name as main_category_name, 
+                 sc.sub_category_name,
+                 CASE 
+                    WHEN t.created_by_type = 'CLIENT_USER' THEN cu.first_name || ' ' || COALESCE(cu.last_name, '')
+                    ELSE u.first_name || ' ' || COALESCE(u.last_name, '')
+                 END as creator_name,
+                 CASE 
+                    WHEN t.created_by_type = 'CLIENT_USER' THEN ru.first_name || ' ' || COALESCE(ru.last_name, '')
+                    ELSE rcu.first_name || ' ' || COALESCE(rcu.last_name, '')
+                 END as reported_to_name
+          FROM "Tickets" t
+          LEFT JOIN lines l ON t.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON t.sp_id = sp.sp_id
+          LEFT JOIN organization o ON t.org_id = o.org_id
+          LEFT JOIN "KPI_Categories" mc ON t.kpi_main_category_id = mc.kpi_main_cat_id
+          LEFT JOIN "KPI_Sub_Categories" sc ON t.kpi_sub_category_id = sc.sub_category_id
+          LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'CLIENT_USER'
+          LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'CLIENT_USER'
+          LEFT JOIN "Users" ru ON t.reported_to = ru.user_id AND t.reported_to_type = 'USER'
+          LEFT JOIN "Client_Users" rcu ON t.reported_to = rcu.client_user_id AND t.reported_to_type = 'CLIENT_USER'
+          WHERE ${isNumeric ? 't.ticket_id = $1' : 't.ticket_number = $1'}
+        `;
+
+        const result = await pool.query(query, [isNumeric ? Number(ticket_id) : ticket_id]);
+        if (result.rows.length === 0) {
+          return res.status(404).json({ error: 'Ticket not found' });
+        }
+        res.json(result.rows[0]);
+      } catch (err) {
+        console.error('Error fetching ticket by ID:', err.message);
+        res.status(500).json({ error: 'Server error while fetching ticket' });
       }
     });
 
@@ -1544,7 +1608,7 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
           `INSERT INTO "Tickets" (ticket_id, line_id, ticket_number, ticket_title, kpi_main_category_id, kpi_sub_category_id, fl_category_id, ticket_status, ticket_description, sp_id, org_id, created_by, created_by_type, reported_to, reported_to_type, attachment, is_read, last_action_by) 
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, FALSE, $17) RETURNING *`,
           [
-            nextId, 
+            Number(nextId), 
             line_id ? Number(line_id) : 1, 
             ticket_number || `TKT-${Date.now()}`, 
             ticket_title || 'SLA Fault Report', 
@@ -1553,14 +1617,14 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
             fl_category_id ? Number(fl_category_id) : 1, 
             ticket_status || 'Open', 
             ticket_description || '', 
-            targetSpId, 
-            targetOrgId, 
-            created_by, 
+            targetSpId ? Number(targetSpId) : 1, 
+            targetOrgId ? Number(targetOrgId) : 1, 
+            created_by ? Number(created_by) : 1, 
             created_by_type, 
             reported_to ? Number(reported_to) : null, 
             targetReportedToType, 
             attachment || null,
-            created_by
+            created_by ? Number(created_by) : 1
           ]
         );
 
@@ -1568,11 +1632,49 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         await client.query(
           `INSERT INTO "Ticket_trail" (comment, ticket_no, new_status, sp_id, line_id, created_by, created_by_type, attachment) 
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          ['Ticket Created: ' + (ticket_description || 'New Ticket'), ticket_number || `TKT-${Date.now()}`, 1, targetSpId, line_id ? Number(line_id) : 1, created_by, created_by_type, attachment || null] 
+          [
+            'Ticket Created: ' + (ticket_description || 'New Ticket'), 
+            ticket_number || `TKT-${Date.now()}`, 
+            1, 
+            targetSpId ? Number(targetSpId) : 1, 
+            line_id ? Number(line_id) : 1, 
+            created_by ? Number(created_by) : 1, 
+            created_by_type, 
+            attachment || null
+          ] 
         );
 
         await client.query('COMMIT');
-        res.status(201).json(ticketResult.rows[0]);
+
+        const fullTicket = await pool.query(`
+          SELECT t.*, 
+                 l.line_name, 
+                 sp.sp_name, 
+                 o.org_name,
+                 mc.kpi_name as main_category_name, 
+                 sc.sub_category_name,
+                 CASE 
+                    WHEN t.created_by_type = 'CLIENT_USER' THEN cu.first_name || ' ' || COALESCE(cu.last_name, '')
+                    ELSE u.first_name || ' ' || COALESCE(u.last_name, '')
+                 END as creator_name,
+                 CASE 
+                    WHEN t.created_by_type = 'CLIENT_USER' THEN ru.first_name || ' ' || COALESCE(ru.last_name, '')
+                    ELSE rcu.first_name || ' ' || COALESCE(rcu.first_name, '')
+                 END as reported_to_name
+          FROM "Tickets" t
+          LEFT JOIN lines l ON t.line_id = l.line_id
+          LEFT JOIN serviceprovider sp ON t.sp_id = sp.sp_id
+          LEFT JOIN organization o ON t.org_id = o.org_id
+          LEFT JOIN "KPI_Categories" mc ON t.kpi_main_category_id = mc.kpi_main_cat_id
+          LEFT JOIN "KPI_Sub_Categories" sc ON t.kpi_sub_category_id = sc.sub_category_id
+          LEFT JOIN "Users" u ON t.created_by = u.user_id AND t.created_by_type != 'CLIENT_USER'
+          LEFT JOIN "Client_Users" cu ON t.created_by = cu.client_user_id AND t.created_by_type = 'CLIENT_USER'
+          LEFT JOIN "Users" ru ON t.reported_to = ru.user_id AND t.reported_to_type = 'USER'
+          LEFT JOIN "Client_Users" rcu ON t.reported_to = rcu.client_user_id AND t.reported_to_type = 'CLIENT_USER'
+          WHERE t.ticket_id = $1
+        `, [nextId]);
+
+        res.status(201).json(fullTicket.rows[0] || ticketResult.rows[0]);
       } catch (err) {
         await client.query('ROLLBACK');
         console.error(err.message);
@@ -1609,15 +1711,21 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         }
         const ticket = currentTicketResult.rows[0];
 
-        // 2. Update Tickets table (Reset is_read=FALSE, update last_action_by, update reported_to_type)
+        // Determine recipient turn flip:
+        // If updater is CLIENT_USER, ticket response goes back TO Service Provider ('USER')
+        // If updater is Service Provider (USER / ADMIN), ticket response goes back TO Client ('CLIENT_USER')
+        const targetReportedToType = updated_by_type === 'CLIENT_USER' ? 'USER' : 'CLIENT_USER';
+        const targetReportedTo = reported_to || (ticket.created_by_type === updated_by_type ? ticket.reported_to : ticket.created_by);
+
+        // 2. Update Tickets table (Reset is_read=FALSE, update last_action_by, flip reported_to_type)
         const updateResult = await client.query(
           `UPDATE "Tickets" 
            SET ticket_status = $1, reported_to = $2, reported_to_type = $3, updated_at = NOW(), is_read = FALSE, last_action_by = $4 
            WHERE ticket_id = $5 RETURNING *`,
           [
             ticket_status || ticket.ticket_status, 
-            reported_to || ticket.reported_to, 
-            reported_to_type || ticket.reported_to_type,
+            targetReportedTo, 
+            targetReportedToType,
             updated_by, 
             ticket_id
           ]
@@ -1702,45 +1810,62 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
      * NOTIFICATION & READ STATUS ENDPOINTS
      */
     app.get('/api/tickets/unread-count', async (req, res) => {
-      const user_id = req.user.id;
-      const user_type = req.user.user_type;
+      const user = req.user;
       try {
-        let query = 'SELECT COUNT(*) FROM "Tickets" t WHERE t.is_read = FALSE';
+        const userId = Number(user.id);
+        const userType = user.user_type;
+        const orgId = user.org_id ? Number(user.org_id) : 1;
+        const spId = user.sp_id ? Number(user.sp_id) : 1;
+
+        let query = '';
         let params = [];
 
-        if (user_type === 'CLIENT_USER') {
-          query += ' AND t.reported_to_type = \'CLIENT_USER\' AND t.org_id = $1';
-          params.push(req.user.org_id || 1);
+        if (userType === 'ADMIN') {
+          query = `
+            SELECT COUNT(*)::int as count 
+            FROM "Tickets" t 
+            WHERE t.is_read = FALSE 
+              AND t.created_by_type = 'CLIENT_USER'
+          `;
+          params = [];
+        } else if (userType === 'CLIENT_USER') {
+          query = `
+            SELECT COUNT(*)::int as count 
+            FROM "Tickets" t 
+            WHERE t.is_read = FALSE 
+              AND t.created_by_type != 'CLIENT_USER'
+              AND (
+                (t.reported_to = $1 AND t.reported_to_type = 'CLIENT_USER')
+                OR t.org_id = $2
+              )
+          `;
+          params = [userId, orgId];
         } else {
-          query += ' AND t.reported_to_type IN (\'USER\', \'ADMIN\') AND t.sp_id = $1';
-          params.push(req.user.sp_id || 1);
+          query = `
+            SELECT COUNT(*)::int as count 
+            FROM "Tickets" t 
+            WHERE t.is_read = FALSE 
+              AND t.created_by_type = 'CLIENT_USER'
+              AND (
+                (t.reported_to = $1 AND t.reported_to_type IN ('USER', 'ADMIN'))
+                OR t.sp_id = $2
+              )
+          `;
+          params = [userId, spId];
         }
 
         const result = await pool.query(query, params);
-        res.json({ count: parseInt(result.rows[0].count) });
+        res.json({ count: result.rows[0]?.count || 0 });
       } catch (err) {
-        console.error(err.message);
+        console.error('Failed to fetch unread count:', err.message);
         res.status(500).json({ error: 'Failed to fetch unread count' });
       }
     });
 
     app.put('/api/tickets/mark-read/:ticket_id', async (req, res) => {
       const { ticket_id } = req.params;
-      const user_id = req.user.id;
-      const user_type = req.user.user_type;
       try {
-        let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1';
-        let params = [ticket_id];
-
-        if (user_type === 'CLIENT_USER') {
-          query += ' AND (reported_to = $2 OR org_id = $3)';
-          params.push(user_id, req.user.org_id || 1);
-        } else {
-          query += ' AND (reported_to = $2 OR sp_id = $3)';
-          params.push(user_id, req.user.sp_id || 1);
-        }
-
-        await pool.query(query, params);
+        await pool.query('UPDATE "Tickets" SET is_read = TRUE WHERE ticket_id = $1', [ticket_id]);
         res.json({ success: true });
       } catch (err) {
         console.error(err.message);
@@ -1749,17 +1874,16 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
     });
 
     app.put('/api/tickets/mark-all-read', async (req, res) => {
-      const user_id = req.user.id;
       const user_type = req.user.user_type;
       try {
         let query = 'UPDATE "Tickets" SET is_read = TRUE WHERE is_read = FALSE';
         let params = [];
 
         if (user_type === 'CLIENT_USER') {
-          query += ' AND org_id = $1';
+          query += ' AND org_id = $1 AND created_by_type != \'CLIENT_USER\'';
           params.push(req.user.org_id || 1);
         } else {
-          query += ' AND sp_id = $1';
+          query += ' AND sp_id = $1 AND created_by_type = \'CLIENT_USER\'';
           params.push(req.user.sp_id || 1);
         }
 
@@ -1769,7 +1893,6 @@ app.delete('/api/fault-level-categories/:fl_category_id', isAdmin, async (req, r
         console.error(err.message);
         res.status(500).json({ error: 'Failed to mark all tickets as read' });
       }
-    });
     });
 
     /**

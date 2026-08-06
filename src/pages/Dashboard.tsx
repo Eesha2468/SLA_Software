@@ -58,8 +58,8 @@ const Dashboard: React.FC = () => {
   const stats = useMemo(() => {
     const total = filteredTickets.length;
     const opened = filteredTickets.filter(t => ['open', 'in progress', 'in-progress'].includes(t.ticket_status?.toLowerCase() || '')).length;
-    const resolved = filteredTickets.filter(t => ['resolved', 'close', 'closed'].includes(t.ticket_status?.toLowerCase() || '')).length;
-    const cancelled = filteredTickets.filter(t => ['cancel', 'cancelled'].includes(t.ticket_status?.toLowerCase() || '')).length;
+    const resolved = filteredTickets.filter(t => (t.ticket_status?.toLowerCase() || '') === 'resolved').length;
+    const cancelled = filteredTickets.filter(t => ['cancel', 'cancelled', 'close', 'closed'].includes(t.ticket_status?.toLowerCase() || '')).length;
 
     return { total, opened, resolved, cancelled };
   }, [filteredTickets]);
@@ -84,19 +84,16 @@ const Dashboard: React.FC = () => {
     const counts = {
       'Open': 0,
       'Resolved': 0,
-      'In-progress': 0,
       'Cancelled': 0
     };
 
     filteredTickets.forEach(t => {
       const status = t.ticket_status?.toLowerCase() || '';
-      if (status === 'open') {
+      if (status === 'open' || status === 'in progress' || status === 'in-progress') {
         counts['Open']++;
-      } else if (status === 'resolved' || status === 'close' || status === 'closed') {
+      } else if (status === 'resolved') {
         counts['Resolved']++;
-      } else if (status === 'in progress' || status === 'in-progress') {
-        counts['In-progress']++;
-      } else if (status === 'cancel' || status === 'cancelled') {
+      } else if (status === 'cancel' || status === 'cancelled' || status === 'close' || status === 'closed') {
         counts['Cancelled']++;
       }
     });
@@ -104,7 +101,6 @@ const Dashboard: React.FC = () => {
     return [
       { name: 'Open', value: counts['Open'] },
       { name: 'Resolved', value: counts['Resolved'] },
-      { name: 'In-progress', value: counts['In-progress'] },
       { name: 'Cancelled', value: counts['Cancelled'] }
     ];
   }, [filteredTickets]);
@@ -224,7 +220,7 @@ const Dashboard: React.FC = () => {
           <DonutChartComponent
             data={statusData}
             title="Ticket Status Overview"
-            colors={['#1e40af', '#059669', '#f59e0b', '#dc2626']}
+            colors={['#1e40af', '#059669', '#dc2626']}
           />
         </Col>
       </Row>

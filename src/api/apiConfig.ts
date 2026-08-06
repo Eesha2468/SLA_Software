@@ -5,7 +5,7 @@
  * Points to http://localhost:5000/api by default to directly connect to the Express backend.
  */
 
-export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000/api';
+export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '/api';
 
 /**
  * Helper to build an absolute URL for API calls.
@@ -21,4 +21,25 @@ export const getApiUrl = (path: string): URL => {
   const finalUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) + sanitizedPath : baseUrl + sanitizedPath;
   
   return new URL(finalUrl);
+};
+
+/**
+ * Get standard headers including Bearer Authorization token for API requests.
+ */
+export const getAuthHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  try {
+    const userStr = sessionStorage.getItem('user');
+    if (userStr) {
+      const user = JSON.parse(userStr);
+      if (user?.token) {
+        headers['Authorization'] = `Bearer ${user.token}`;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to parse token from sessionStorage", e);
+  }
+  return headers;
 };

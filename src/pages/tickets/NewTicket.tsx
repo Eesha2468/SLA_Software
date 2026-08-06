@@ -148,8 +148,11 @@ const NewTicket: React.FC = () => {
   };
 
   const [fileList, setFileList] = useState<any[]>([]);
+  const [submitting, setSubmitting] = useState(false);
 
   const onFinish = async (values: any) => {
+    if (submitting) return;
+    setSubmitting(true);
     let spId = isRegularUser ? 1 : values.sp_id; // Defaulting to 1 for Regular Users as per prompt's implicit context of 'eesha.tap' logic
     let orgId = isClient ? loggedInUser.org_id : values.org_id;
 
@@ -163,6 +166,7 @@ const NewTicket: React.FC = () => {
       // Check file size (10MB = 10 * 1024 * 1024 bytes)
       if (file.size > 10 * 1024 * 1024) {
         message.error("File size should not be greater than 10MB");
+        setSubmitting(false);
         return;
       }
 
@@ -198,9 +202,10 @@ const NewTicket: React.FC = () => {
       form.resetFields();
       setFileList([]);
     } catch (error: any) {
-      message.success("Ticket created successfully!");
-      form.resetFields();
-      setFileList([]);
+      console.error("Failed to create ticket:", error);
+      message.error(error.message || "Failed to create ticket");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -306,13 +311,10 @@ const NewTicket: React.FC = () => {
                 <Select 
                   size="large"
                   placeholder="Select Fault Level"
-                  options={filteredFaultLevels.map(fl => {
-                    let label = fl.fl_name || fl.fl_desc || '';
-                    if (label.toLowerCase() === 'material') {
-                      label = 'Major';
-                    }
-                    return { value: Number(fl.fl_category_id), label };
-                  })}
+                  options={filteredFaultLevels.map(fl => ({
+                    value: Number(fl.fl_category_id),
+                    label: fl.fl_name || fl.fl_desc || ''
+                  }))}
                   disabled={!selectedKpiCategory}
                   style={{ width: '100%' }}
                 />
@@ -320,7 +322,7 @@ const NewTicket: React.FC = () => {
             </Col>
 
             <Col xs={24} md={8}>
-              <Form.Item name="title" label="Ticket Title">
+              <Form.Item name="title" label="Ticket Title" rules={[{ required: true, message: 'Please enter ticket title' }]}>
                 <Input size="large" placeholder="Enter ticket title" style={{ width: '100%' }} />
               </Form.Item>
             </Col>
@@ -354,7 +356,7 @@ const NewTicket: React.FC = () => {
               </Form.Item>
             </Col>
             <Col>
-              <Button type="primary" htmlType="submit" icon={<PlusOutlined />} size="large" loading={loading} style={{ height: 45, padding: '0 32px', borderRadius: 8 }}>
+              <Button type="primary" htmlType="submit" icon={<PlusOutlined />} size="large" loading={loading || submitting} disabled={loading || submitting} style={{ height: 45, padding: '0 32px', borderRadius: 8 }}>
                 Generate Ticket
               </Button>
             </Col>

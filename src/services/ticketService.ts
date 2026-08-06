@@ -1,4 +1,4 @@
-import { fetchTickets, createTicketInDb, updateTicketInDb, deleteTicketInDb, TicketDTO } from "../api/ticketApi";
+import { fetchTickets, fetchTicketById, createTicketInDb, updateTicketInDb, deleteTicketInDb, TicketDTO } from "../api/ticketApi";
 
 export const ticketService = {
   create: async (ticket: TicketDTO) => {
@@ -7,6 +7,10 @@ export const ticketService = {
 
   getAll: async (user_id?: number, user_type?: string) => {
     return await fetchTickets(user_id, user_type);
+  },
+
+  getById: async (ticket_id: string | number) => {
+    return await fetchTicketById(ticket_id);
   },
 
   update: async (ticket: TicketDTO) => {

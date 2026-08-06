@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useTickets } from "../../hooks/useTickets";
-import { Card, Tag, List, Typography, Descriptions, Divider, Space, Button, Form, Input, message, Upload, Row, Col } from "antd";
+import { Card, Tag, List, Typography, Descriptions, Divider, Space, Button, Form, Input, Select, message, Upload, Row, Col, Alert } from "antd";
 import { UploadOutlined, SendOutlined } from "@ant-design/icons";
 import { TicketDTO, fetchTicketTrail, TicketTrailDTO, markTicketAsRead } from "../../api/ticketApi";
 import dayjs from "dayjs";
@@ -38,8 +38,8 @@ const TicketDetails: React.FC = () => {
         const trailData = await fetchTicketTrail(data.ticket_number);
         setTrail(trailData);
 
-        // Mark as read if I am the receiver
-        if (loggedInUser && String(data.reported_to) === String(loggedInUser.id)) {
+        // Mark as read when ticket details are opened/checked
+        if (loggedInUser) {
           await markTicketAsRead(Number(id), loggedInUser.id, loggedInUser.user_type);
           window.dispatchEvent(new Event('unread-count-updated'));
         }
@@ -53,13 +53,28 @@ const TicketDetails: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    // Real-time trail refresh every 5 seconds
-    const interval = setInterval(loadData, 5000);
+    // Refresh trail only every 10 seconds for efficiency
+    const interval = setInterval(async () => {
+      if (ticket?.ticket_number) {
+        const trailData = await fetchTicketTrail(ticket.ticket_number);
+        setTrail(trailData);
+      }
+    }, 10000);
     return () => clearInterval(interval);
-  }, [id, loggedInUser?.id]);
+  }, [id, ticket?.ticket_number]);
+
+  const loggedInUserType = loggedInUser?.user_type;
+  const isClientUser = loggedInUserType === 'CLIENT_USER';
+
+  const normalizedStatus = (ticket?.ticket_status || '').trim().toLowerCase();
+  const isResolvedOrClosed = ['resolved', 'close', 'closed', 'cancel', 'cancelled'].includes(normalizedStatus);
+
+  const isMyTurnToRespond = isClientUser 
+    ? (ticket?.reported_to_type === 'CLIENT_USER') 
+    : (ticket?.reported_to_type !== 'CLIENT_USER');
 
   const handleAddComment = async (values: any) => {
-    if (!ticket) return;
+    if (!ticket || isResolvedOrClosed || !isMyTurnToRespond) return;
     setSubmitting(true);
     try {
       // Convert file to base64 if exists
@@ -83,13 +98,16 @@ const TicketDetails: React.FC = () => {
 
       await updateTicket({
         ticket_id: ticket.ticket_id!,
+        ticket_status: values.complaint_action,
+        reported_to: ticket.created_by,
+        reported_to_type: ticket.created_by_type,
         remarks: values.comment,
         updated_by: loggedInUser?.id,
         updated_by_type: loggedInUser?.user_type || 'USER',
         attachment: attachmentBase64 as string,
       } as any);
 
-      message.success("Response added successfully");
+      message.success("Response sent back successfully");
       form.resetFields();
       setFileList([]);
       await loadData();
@@ -103,9 +121,40 @@ const TicketDetails: React.FC = () => {
   if (loading && !ticket) return <div style={{ padding: 24 }}>Loading...</div>;
   if (!ticket) return <div style={{ padding: 24 }}>Ticket not found</div>;
 
+  const openInNewTab = (dataUrl: string) => {
+    if (!dataUrl) return;
+    try {
+      if (dataUrl.startsWith('data:')) {
+        const arr = dataUrl.split(',');
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const blob = new Blob([u8arr], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank');
+      } else {
+        window.open(dataUrl, '_blank');
+      }
+    } catch (e) {
+      console.error("Failed to open attachment in new tab:", e);
+      const newWin = window.open();
+      if (newWin && dataUrl.startsWith('data:image/')) {
+        newWin.document.write(`<img src="${dataUrl}" style="max-width:100%;height:auto;" />`);
+      } else if (newWin) {
+        newWin.location.href = dataUrl;
+      }
+    }
+  };
+
   const renderAttachment = (base64: string | undefined, fileName: string = "attachment") => {
     if (!base64) return null;
     const isImage = base64.startsWith('data:image/');
+    const isVideo = base64.startsWith('data:video/');
     
     if (isImage) {
       return (
@@ -114,7 +163,20 @@ const TicketDetails: React.FC = () => {
             src={base64} 
             alt="attachment" 
             style={{ maxWidth: '200px', maxHeight: '200px', borderRadius: 8, cursor: 'pointer', border: '1px solid #d9d9d9' }} 
-            onClick={() => window.open(base64, '_blank')}
+            onClick={() => openInNewTab(base64)}
+          />
+        </div>
+      );
+    }
+
+    if (isVideo) {
+      return (
+        <div style={{ marginTop: 8 }}>
+          <video 
+            src={base64} 
+            controls 
+            style={{ maxWidth: '240px', maxHeight: '180px', borderRadius: 8, cursor: 'pointer', border: '1px solid #d9d9d9' }}
+            onClick={() => openInNewTab(base64)}
           />
         </div>
       );
@@ -124,15 +186,10 @@ const TicketDetails: React.FC = () => {
       <Button 
         type="link" 
         icon={<UploadOutlined />} 
-        onClick={() => {
-          const link = document.createElement('a');
-          link.href = base64;
-          link.download = fileName;
-          link.click();
-        }}
+        onClick={() => openInNewTab(base64)}
         style={{ padding: 0 }}
       >
-        Download Attachment
+        {fileName || "View Attachment"}
       </Button>
     );
   };
@@ -140,9 +197,11 @@ const TicketDetails: React.FC = () => {
   return (
     <div style={{ padding: 24 }}>
       <Card title={
-        <Space direction="vertical" size={0}>
+        <Space direction="vertical" size={2}>
           <Title level={3} style={{ margin: 0 }}>{ticket.ticket_number}</Title>
-          <Text type="secondary">{ticket.ticket_title}</Text>
+          <Text type="secondary" style={{ fontSize: '15px', fontWeight: 500, color: '#4a5568' }}>
+            {ticket.ticket_title || "SLA Fault Report"}
+          </Text>
         </Space>
       }>
         <Descriptions bordered column={2}>
@@ -162,6 +221,9 @@ const TicketDetails: React.FC = () => {
           <Descriptions.Item label="Attachment">
             {renderAttachment(ticket.attachment, `ticket_${ticket.ticket_number}_file`)}
           </Descriptions.Item>
+          <Descriptions.Item label="Ticket Title" span={2}>
+            <Text strong style={{ fontSize: '15px' }}>{ticket.ticket_title || "SLA Fault Report"}</Text>
+          </Descriptions.Item>
           <Descriptions.Item label="Description" span={2}>
             <Text style={{ whiteSpace: 'pre-wrap' }}>{ticket.ticket_description}</Text>
           </Descriptions.Item>
@@ -170,28 +232,65 @@ const TicketDetails: React.FC = () => {
         <Divider />
         
         <Title level={4}>Add Response</Title>
-        <Form form={form} layout="vertical" onFinish={handleAddComment}>
-          <Form.Item name="comment" rules={[{ required: true, message: 'Please enter your comment' }]}>
-            <TextArea rows={3} placeholder="Write your response here..." />
-          </Form.Item>
-          <Row gutter={16} align="middle">
-            <Col flex="auto">
-              <Upload 
-                beforeUpload={() => false} 
-                maxCount={1}
-                fileList={fileList}
-                onChange={({ fileList }) => setFileList(fileList)}
-              >
-                <Button icon={<UploadOutlined />}>Attach File</Button>
-              </Upload>
-            </Col>
-            <Col>
-              <Button type="primary" htmlType="submit" icon={<SendOutlined />} loading={submitting}>
-                Send Response
-              </Button>
-            </Col>
-          </Row>
-        </Form>
+        {isResolvedOrClosed ? (
+          <Alert 
+            message="Ticket Status Resolved/Closed"
+            description="This ticket is marked as Resolved or Closed. Response sending option is disabled for both sender and receiver."
+            type="info" 
+            showIcon 
+            style={{ marginBottom: 16 }} 
+          />
+        ) : !isMyTurnToRespond ? (
+          <Alert 
+            message="Waiting for Response"
+            description={`Response sending is currently disabled for your account on this ticket. Waiting for response from ${isClientUser ? 'Service Provider' : 'Client'}.`}
+            type="warning" 
+            showIcon 
+            style={{ marginBottom: 16 }} 
+          />
+        ) : (
+          <Form form={form} layout="vertical" onFinish={handleAddComment}>
+            <Form.Item name="comment" rules={[{ required: true, message: 'Please enter your comment' }]}>
+              <TextArea rows={3} placeholder="Write your response here..." disabled={submitting || isResolvedOrClosed || !isMyTurnToRespond} />
+            </Form.Item>
+            
+            <Row gutter={16} align="middle" style={{ marginBottom: 16 }}>
+              <Col flex="auto">
+                <Upload 
+                  beforeUpload={() => false} 
+                  maxCount={1}
+                  fileList={fileList}
+                  onChange={({ fileList }) => setFileList(fileList)}
+                  disabled={submitting || isResolvedOrClosed || !isMyTurnToRespond}
+                >
+                  <Button icon={<UploadOutlined />} disabled={submitting || isResolvedOrClosed || !isMyTurnToRespond}>Attach File</Button>
+                </Upload>
+              </Col>
+            </Row>
+
+            <Row justify="space-between" align="bottom" style={{ marginBottom: 0 }}>
+              <Col>
+                <Form.Item 
+                  name="complaint_action" 
+                  label="Ticket Action" 
+                  rules={[{ required: true, message: 'Please select a Ticket Action option before sending response' }]}
+                  style={{ marginBottom: 0 }}
+                >
+                  <Select placeholder="Select Ticket Action" size="large" style={{ width: 260 }} disabled={submitting || isResolvedOrClosed || !isMyTurnToRespond}>
+                    <Select.Option value="Open">Open</Select.Option>
+                    <Select.Option value="Resolved">Resolve</Select.Option>
+                    <Select.Option value="Cancel">Cancel</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col>
+                <Button type="primary" htmlType="submit" icon={<SendOutlined />} loading={submitting} disabled={submitting || isResolvedOrClosed || !isMyTurnToRespond} size="large">
+                  Send Response
+                </Button>
+              </Col>
+            </Row>
+          </Form>
+        )}
 
         <h3 style={{ marginTop: 24 }}>Ticket Trail / History</h3>
         <List
